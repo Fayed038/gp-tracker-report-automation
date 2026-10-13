@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GP Tracker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Bengali:wght@400;700&family=Noto+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="login" class="screen hidden">
+  <div class="card login-card">
+    <h1>GP Tracker</h1>
+    <p class="muted">Officer GPS report &amp; SIM register</p>
+    <input id="email" type="email" placeholder="Email" autocomplete="username">
+    <input id="pass" type="password" placeholder="Password" autocomplete="current-password">
+    <button id="btnLogin" class="primary">Sign in</button>
+    <div class="row-links">
+      <a href="#" id="lnkSignup">Create account</a> · <a href="#" id="lnkReset">Forgot password</a>
+    </div>
+    <p id="loginMsg" class="msg"></p>
+  </div>
+</div>
+
+<div id="app" class="hidden">
+  <header class="no-print">
+    <strong>GP Tracker</strong>
+    <nav>
+      <button data-page="report" class="tab active">Daily Report</button>
+      <button data-page="ttcheck" class="tab">TT Check</button>
+      <button data-page="officers" class="tab">Officers</button>
+      <button data-page="sims" class="tab">SIMs</button>
+      <button data-page="dash" class="tab">Dashboard</button>
+    </nav>
+    <span id="who" class="muted"></span>
+    <button id="btnLogout">Sign out</button>
+  </header>
+
+  <!-- REPORT -->
+  <section id="page-report" class="page">
+    <div class="card no-print">
+      <h2>Daily GPS Report</h2>
+      <p class="muted">Select today's GP Team Tracker export file(s) (.xlsx). Several files are merged into one report.</p>
+      <input type="file" id="ttFiles" accept=".xlsx,.xls" multiple>
+      <div class="toolbar">
+        <button id="btnBuild" class="primary">Build report</button>
+        <button id="btnPrint" disabled>Print / Save PDF</button>
+        <button id="btnAudit" disabled>Download audit CSV</button>
+      </div>
+      <div id="repStats" class="stats"></div>
+      <div id="repWarn" class="warn hidden"></div>
+    </div>
+    <div id="reportOut"></div>
+  </section>
+
+  <!-- TT CHECK -->
+  <section id="page-ttcheck" class="page hidden">
+    <div class="card">
+      <h2>Team Tracker Check</h2>
+      <p class="muted">Upload a Team Tracker export to compare it with the officer list.</p>
+      <input type="file" id="ttCheckFiles" accept=".xlsx,.xls" multiple>
+      <button id="btnCheck" class="primary">Check</button>
+      <div id="checkOut"></div>
+    </div>
+  </section>
+
+  <!-- OFFICERS -->
+  <section id="page-officers" class="page hidden">
+    <div class="card">
+      <div class="toolbar">
+        <h2>Officers</h2>
+        <input id="offSearch" placeholder="Search name / number / territory">
+        <select id="offStatus"><option value="">All status</option></select>
+        <select id="offZone"><option value="">All report zones</option></select>
+        <button id="btnAddOff" class="primary">+ Add officer</button>
+        <button id="btnExportOff">Export Excel</button>
+      </div>
+      <div class="tablewrap"><table id="offTable" class="grid"></table></div>
+    </div>
+  </section>
+
+  <!-- SIMS -->
+  <section id="page-sims" class="page hidden">
+    <div class="card">
+      <div class="toolbar">
+        <h2>SIMs</h2>
+        <input id="simSearch" placeholder="Search number / remarks">
+        <select id="simStatus"><option value="">All status</option></select>
+        <button id="btnExportSim">Export Excel</button>
+      </div>
+      <div class="tablewrap"><table id="simTable" class="grid"></table></div>
+    </div>
+  </section>
+
+  <!-- DASHBOARD -->
+  <section id="page-dash" class="page hidden">
+    <div class="card"><h2>Dashboard</h2><div id="dashOut"></div></div>
+    <div class="card"><h2>Recent changes</h2><div id="logOut"></div></div>
+  </section>
+</div>
+
+<dialog id="dlg"><form method="dialog" id="dlgForm"></form></dialog>
+
+<script src="lib/supabase.js"></script>
+<script src="lib/xlsx.full.min.js"></script>
+<script src="config.js"></script>
+<script src="report.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
