@@ -29,6 +29,8 @@
     <nav>
       <button data-page="report" class="tab active">Daily Report</button>
       <button data-page="ttcheck" class="tab">TT Check</button>
+      <button data-page="changes" class="tab">Changes</button>
+      <button data-page="requests" class="tab">Approvals<span id="reqBadge"></span></button>
       <button data-page="officers" class="tab">Officers</button>
       <button data-page="sims" class="tab">SIMs</button>
       <button data-page="dash" class="tab">Dashboard</button>
@@ -45,7 +47,8 @@
       <input type="file" id="ttFiles" accept=".xlsx,.xls" multiple>
       <div class="toolbar">
         <button id="btnBuild" class="primary">Build report</button>
-        <button id="btnPrint" disabled>Print / Save PDF</button>
+        <button id="btnPrint" disabled>Download PDF</button>
+        <button id="btnCsv" disabled>Download CSV</button>
         <button id="btnAudit" disabled>Download audit CSV</button>
       </div>
       <div id="repStats" class="stats"></div>
@@ -63,6 +66,27 @@
       <button id="btnCheck" class="primary">Check</button>
       <div id="checkOut"></div>
     </div>
+  </section>
+
+  <!-- CHANGES -->
+  <section id="page-changes" class="page hidden">
+    <div class="card">
+      <h2>Make a change</h2>
+      <p class="muted">Pick what happened. The site updates officers, SIMs and the daily report together, records it in the change log, and tells you what to do in Team Tracker.</p>
+      <div class="choices">
+        <button class="choice" data-act="join"><b>New officer joined</b><span>Add a person and give them a SIM</span></button>
+        <button class="choice" data-act="replace"><b>New officer on the same number</b><span>Someone left, a new person takes their SIM</span></button>
+        <button class="choice" data-act="leave"><b>Officer left</b><span>Remove from report, SIM to spare or replacement</span></button>
+        <button class="choice" data-act="renumber"><b>Officer's number changed</b><span>Give an officer a different SIM</span></button>
+        <button class="choice" data-act="simstatus"><b>Change a SIM's status</b><span>Spare, reserved, suspended, closed…</span></button>
+      </div>
+    </div>
+    <div id="actForm"></div>
+  </section>
+
+  <!-- APPROVALS / REQUESTS -->
+  <section id="page-requests" class="page hidden">
+    <div class="card"><h2>Change requests</h2><div id="reqOut"></div></div>
   </section>
 
   <!-- OFFICERS -->
@@ -95,7 +119,7 @@
 
   <!-- DASHBOARD -->
   <section id="page-dash" class="page hidden">
-    <div class="card"><h2>Dashboard</h2><div id="dashOut"></div></div>
+    <div class="card"><div class="toolbar"><h2>Dashboard</h2><button id="btnMaster" class="primary">⬇ Download master Excel (all sheets)</button></div><div id="dashOut"></div></div>
     <div class="card"><h2>Recent changes</h2><div id="logOut"></div></div>
   </section>
 </div>
@@ -104,6 +128,7 @@
 
 <script src="lib/supabase.js"></script>
 <script src="lib/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 <script src="config.js"></script>
 <script src="report.js"></script>
 <script src="app.js"></script>

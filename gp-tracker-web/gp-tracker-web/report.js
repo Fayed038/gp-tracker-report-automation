@@ -102,8 +102,9 @@
         const found = matches.some(m => m.rec);
         let ost = null;
         if (!found) {
-          const k = nameKey(o.report_name);
-          const hit = k && clKeys.find(([, ck]) => ck === k);
+          // match by report name, or by the officer's exact Team Tracker name (handles spelling differences)
+          const keys = [nameKey(o.report_name), o.tt_name ? nameKey(o.tt_name) : ""].filter(Boolean);
+          const hit = clKeys.find(([, ck]) => keys.includes(ck));
           if (hit) { matchedCl.add(hit[0]); ost = [CL, "Couldn't locate (tracker explicit)", "Tracker explicitly reported CL"]; }
           else if (!recs) ost = ["No raw record", "No raw record in export", "Officer mobile not in export"];
           else ost = ["Absent", "GPS record exists but no ping near checkpoint", `No ping within ±${cfg.toleranceMinutes} min`];

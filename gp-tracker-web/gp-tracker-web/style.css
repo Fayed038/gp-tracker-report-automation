@@ -61,3 +61,23 @@ table.rep .red{color:var(--red)}
   .rep-title{font-size:13pt;padding:5px 0}
   *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
 }
+
+.choices{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
+.choice{text-align:left;padding:14px;display:flex;flex-direction:column;gap:4px}
+.choice span{color:var(--muted);font-size:13px}
+.choice.sel{border-color:var(--navy);box-shadow:0 0 0 2px var(--navy) inset}
+.fgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;margin:10px 0}
+.fgrid label{display:flex;flex-direction:column;font-size:12px;color:var(--muted);gap:3px}
+.todo{background:#eef7ee;border:1px solid #9fd3a7;border-radius:8px;padding:12px;margin-top:12px;white-space:pre-wrap}
+
+.pdfmode{width:1100px;background:#fff}
+.pdfmode .rep-zone{padding:0;margin:0}
+.pdfmode table.rep{font-size:8.5px}
+.pdfmode table.rep thead th{font-size:10px}
+.pdfmode .rep-title{font-size:17px;padding:5px 0}
+.pdfmode .rep-date{font-size:11px}
+.pdfmode .rep-sum{display:none}
+
+.pill.Suspended{background:#ececec;color:#555}
+.pill.pending{background:#fff1c2}.pill.approved{background:#e3f6e8}.pill.rejected{background:#fde2e2}
+#reqBadge{color:#c00000;font-weight:700}
