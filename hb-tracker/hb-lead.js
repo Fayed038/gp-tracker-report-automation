@@ -6,7 +6,7 @@ const send = (kind, payload) => q(sb.from("hb_requests").insert({ kind, region_i
 
 L.home = async el => {
   const [offs, sims, reqs, rep, anns] = await Promise.all([myOfficers(), q(sb.from("hb_sims").select("number,status").eq("region_id", myRegion())), q(sb.from("hb_requests").select("id").eq("status", "pending")), latestReport(), q(sb.from("hb_announcements").select("*").order("created_at", { ascending: false }).limit(3))]);
-  let todo = 0; if (rep) { const { count } = await sb.from("hb_report_rows").select("id", { count: "exact", head: true }).eq("report_id", rep.id).not("issue", "is", null).is("justified_at", null); todo = count || 0; }
+  let todo = 0; if (rep) { const { count } = await sb.from("hb_report_rows").select("id", { count: "exact", head: true }).eq("report_id", rep.id).not("issue", "is", null).not("sent_at", "is", null).is("justified_at", null); todo = count || 0; }
   el.innerHTML = head(`${esc(regionName(myRegion()))} region`, `Hello ${esc(HB.me.full_name || "")}, here is what needs you today`) +
     stats([["My officers", offs.length, "active"], ["To justify", todo, rep ? "report " + fmtDate(rep.report_date) : "no report yet", "#C2410C"], ["My spare SIMs", sims.filter(s => s.status === "spare").length, "ready for new joiners", "#15803D"], ["My requests", reqs.length, "waiting for HQ", "#1F5FD1"]]) +
     `<div class="tiles"><a class="tile" href="#/ljustify"><b>Justify today's list</b><span>${todo} officers need a reason</span></a><a class="tile" href="#/change?k=resignation"><b>Officer resigned</b><span>Report it today and say if the SIM came back</span></a><a class="tile" href="#/change?k=new_joiner"><b>New joiner</b><span>Add them and give a spare SIM</span></a><a class="tile" href="#/change?k=transfer"><b>Transfer or promotion</b><span>Move or update an officer</span></a></div>` +
@@ -19,12 +19,12 @@ const REASONS = { "Couldn't locate": ["Phone off / no network", "Field visit (no
 L.ljustify = async el => {
   const rep = await latestReport();
   if (!rep) { el.innerHTML = head("Justify Today", "") + `<div class="card empty">No report yet.</div>`; return; }
-  const rows = await q(sb.from("hb_report_rows").select("*").eq("report_id", rep.id).not("issue", "is", null).order("officer_name"));
+  const rows = await q(sb.from("hb_report_rows").select("*").eq("report_id", rep.id).not("issue", "is", null).not("sent_at", "is", null).order("officer_name"));
   const dl = (await q(sb.from("hb_settings").select("value").eq("key", "justify_deadline")))[0]?.value || "18:00";
   el.innerHTML = head("Justify the list", `Report of ${fmtDate(rep.report_date)} · please answer by ${esc(dl)}`, rows.length ? `<button class="primary" id="jSave">Submit all</button>` : "") +
     `<div class="card">${table(["Officer", "Number", "Issue", "Reason", "Note"], rows.map(r => tr([esc(r.officer_name), esc(r.sim_number), pill(r.issue, "p-red"),
       `<select data-r="${r.id}"><option value="">Choose reason…</option>${(REASONS[r.issue] || REASONS.Absent).map(x => `<option ${r.reason === x ? "selected" : ""}>${x}</option>`).join("")}</select>`,
-      `<input data-n="${r.id}" value="${esc(r.note)}" placeholder="Add a note">` + (r.justified_at ? `<div class="muted" style="font-size:12px">sent ${fmtTime(r.justified_at)}${r.accepted === true ? " · accepted" : r.accepted === false ? " · HQ not satisfied" : ""}</div>` : "")])), "Nothing to justify. All your officers were tracked.")}</div><div class="warn">Late answers count against your region's monthly score.</div>`;
+      `<input data-n="${r.id}" value="${esc(r.note)}" placeholder="Add a note">` + (r.justified_at ? `<div class="muted" style="font-size:12px">sent ${fmtTime(r.justified_at)}${r.accepted === true ? " · accepted" : r.accepted === false ? " · HQ not satisfied" : ""}</div>` : "")])), "Nothing to justify right now. HQ will send you a list when needed.")}</div><div class="warn">Late answers count against your region's monthly score.</div>`;
   const b = $("#jSave"); if (b) b.onclick = async () => {
     const todo = rows.filter(r => el.querySelector(`[data-r="${r.id}"]`).value);
     if (!todo.length) return toast("Choose a reason first");

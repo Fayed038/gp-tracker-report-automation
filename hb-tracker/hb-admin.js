@@ -102,13 +102,13 @@ P.report = async el => {
       const rows = rep.zones.flatMap(z => z.rows.map(r => ({ report_id: saved.id, report_date: ds, officer_id: r.oid, region_id: r.region_id, officer_name: r.name, sim_number: r.mobile, checkpoints: r, issue: /Inactive/.test(r.remarks) ? null : (r.remarks || null) })));
       for (let i = 0; i < rows.length; i += 500) await q(sb.from("hb_report_rows").insert(rows.slice(i, i + 500)));
       S.lastRep = rep;
-      $("#rpOut").innerHTML = stats([["On report", rep.stats.officers], ["Located", rep.stats.officers - rep.stats.cl_tracker_set - rep.stats.no_raw_record - rep.stats.absent_set, "", "#15803D"], ["Couldn't locate", rep.stats.cl_tracker_set, "sent to leads", "#C2410C"], ["Absent / no record", rep.stats.absent_set + rep.stats.no_raw_record, "sent to leads", "#C2410C"]]) +
+      $("#rpOut").innerHTML = stats([["On report", rep.stats.officers], ["Located", rep.stats.officers - rep.stats.cl_tracker_set - rep.stats.no_raw_record - rep.stats.absent_set, "", "#15803D"], ["Couldn't locate", rep.stats.cl_tracker_set, "review in Justifications", "#C2410C"], ["Absent / no record", rep.stats.absent_set + rep.stats.no_raw_record, "review in Justifications", "#C2410C"]]) +
         (rep.unmatchedCl.length ? `<div class="warn">Team Tracker "Couldn't locate" names not matched to any officer:\n${rep.unmatchedCl.map(esc).join(", ")}</div>` : "") +
         `<div class="card">${renderReportHtml(rep.zones, rep.date)}</div>`;
       $("#rpPdf").disabled = $("#rpCsv").disabled = false;
       $("#rpPdf").onclick = () => reportPdf(rep.zones, rep.date, `GPS_Report_${ds}.pdf`);
       $("#rpCsv").onclick = () => downloadCsv(`GPS_Report_${ds}.csv`, reportCsvRows(rep.zones));
-      toast("Report saved. Leads can now justify their lists."); refreshBell();
+      toast("Report saved. Go to Justifications to send lists to leads."); refreshBell();
     } catch (e) { fail(e); } finally { $("#rpBuild").disabled = false; }
   };
 };
@@ -116,20 +116,29 @@ P.report = async el => {
 /* Justifications */
 P.justify = async el => {
   const reps = await q(sb.from("hb_reports").select("id,report_date").order("report_date", { ascending: false }).limit(60));
-  el.innerHTML = head("Justifications", "Reasons from leads for officers who could not be tracked") + (reps.length ? `<div class="filters"><select id="jR">${reps.map(r => `<option value="${r.id}">${fmtDate(r.report_date)}</option>`).join("")}</select><select id="jRg">${regionOptions("", { all: "All regions" })}</select><select id="jS"><option value="">All status</option><option value="w">Waiting</option><option value="a">Answered</option></select><button id="jX">Export</button></div><div id="jOut"></div>` : `<div class="card empty">No reports yet.</div>`);
+  el.innerHTML = head("Justifications", "Pick the officers you want reasons for, then send them to their leads") + (reps.length ? `<div class="filters"><select id="jR">${reps.map(r => `<option value="${r.id}">${fmtDate(r.report_date)}</option>`).join("")}</select><select id="jRg">${regionOptions("", { all: "All regions" })}</select><select id="jS"><option value="">All status</option><option value="u">Not sent</option><option value="w">Waiting</option><option value="a">Answered</option></select><button id="jX">Export</button></div><div id="jOut"></div>` : `<div class="card empty">No reports yet.</div>`);
   if (!reps.length) return;
   const draw = async () => {
     let rows = await q(sb.from("hb_report_rows").select("*").eq("report_id", +$("#jR").value).not("issue", "is", null).order("region_id"));
     const rg = +$("#jRg").value, st = $("#jS").value;
-    rows = rows.filter(r => (!rg || r.region_id === rg) && (!st || (st === "w" ? !r.justified_at : !!r.justified_at)));
+    rows = rows.filter(r => (!rg || r.region_id === rg) && (!st || (st === "u" ? !r.sent_at : st === "w" ? r.sent_at && !r.justified_at : !!r.justified_at)));
     S.jrows = rows;
-    $("#jOut").innerHTML = stats([["Sent", rows.length], ["Answered", rows.filter(r => r.justified_at).length, "", "#15803D"], ["Waiting", rows.filter(r => !r.justified_at).length, "", "#C2410C"]]) +
-      `<div class="card">${table(["Officer", "Region", "Issue", "Reason", "Answered", "HQ"], rows.map(r => tr([esc(r.officer_name), esc(regionName(r.region_id)), esc(r.issue), r.reason ? esc(r.reason) + (r.note ? `<br><span class="muted">${esc(r.note)}</span>` : "") : pill("Waiting", "p-amber"), fmtTime(r.justified_at),
-        r.justified_at ? (r.accepted === true ? pill("Accepted", "p-green") : r.accepted === false ? pill("Not accepted", "p-red") : `<button class="sm" data-a="${r.id}">Accept</button> <button class="sm" data-n="${r.id}">Not OK</button>`) : ""])))}</div>`;
+    const uns = rows.filter(r => !r.sent_at);
+    $("#jOut").innerHTML = stats([["Not sent", uns.length, "choose and send", "#64748B"], ["Sent", rows.length - uns.length], ["Answered", rows.filter(r => r.justified_at).length, "", "#15803D"], ["Waiting", rows.filter(r => r.sent_at && !r.justified_at).length, "", "#C2410C"]]) +
+      (uns.length ? `<div class="acts" style="margin:10px 0"><label style="display:flex;gap:6px;align-items:center;margin:0"><input type="checkbox" id="jAll" style="width:auto"> Select all not sent</label><button class="primary" id="jSend">Send selected to leads</button></div>` : "") +
+      `<div class="card">${table(["", "Officer", "Region", "Issue", "Reason", "Answered", "HQ"], rows.map(r => tr([r.sent_at ? "" : `<input type="checkbox" data-s="${r.id}" style="width:auto">`, esc(r.officer_name), esc(regionName(r.region_id)), esc(r.issue), !r.sent_at ? pill("Not sent", "p-navy") : r.reason ? esc(r.reason) + (r.note ? `<br><span class="muted">${esc(r.note)}</span>` : "") : pill("Waiting", "p-amber"), fmtTime(r.justified_at),
+        r.justified_at ? (r.accepted === true ? pill("Accepted", "p-green") : r.accepted === false ? pill("Not accepted", "p-red") : `<button class="sm" data-a="${r.id}">Accept</button> <button class="sm" data-n="${r.id}">Not OK</button>`) : ""])), "No officers with issues.")}</div>`;
     $("#jOut").querySelectorAll("[data-a],[data-n]").forEach(b => b.onclick = async () => { try { await rpc("hb_accept_reason", { p_row: +(b.dataset.a || b.dataset.n), p_ok: !!b.dataset.a }); draw(); } catch (e) { fail(e); } });
+    const all = $("#jAll"); if (all) all.onchange = () => $("#jOut").querySelectorAll("[data-s]").forEach(c => c.checked = all.checked);
+    const sb2 = $("#jSend"); if (sb2) sb2.onclick = async () => {
+      const ids = [...$("#jOut").querySelectorAll("[data-s]:checked")].map(c => +c.dataset.s);
+      if (!ids.length) return toast("Select officers first");
+      sb2.disabled = true;
+      try { const n = await rpc("hb_send_justify", { p_rows: ids }); toast(`${n} sent to leads`); refreshBell(); draw(); } catch (e) { fail(e); sb2.disabled = false; }
+    };
   };
   ["#jR", "#jRg", "#jS"].forEach(s => $(s).onchange = draw);
-  $("#jX").onclick = () => downloadCsv(`Justifications_${today()}.csv`, S.jrows.map(r => ({ Date: r.report_date, Region: regionName(r.region_id), Officer: r.officer_name, Number: r.sim_number, Issue: r.issue, Reason: r.reason || "", Note: r.note || "", Answered: r.justified_at || "", Accepted: r.accepted ?? "" })));
+  $("#jX").onclick = () => downloadCsv(`Justifications_${today()}.csv`, S.jrows.map(r => ({ Date: r.report_date, Region: regionName(r.region_id), Officer: r.officer_name, Number: r.sim_number, Issue: r.issue, Sent: r.sent_at || "", Reason: r.reason || "", Note: r.note || "", Answered: r.justified_at || "", Accepted: r.accepted ?? "" })));
   draw();
 };
 

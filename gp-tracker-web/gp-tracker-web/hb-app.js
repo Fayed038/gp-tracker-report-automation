@@ -119,7 +119,7 @@ const NAV_ADMIN = [["dashboard", "Dashboard", "dash"], ["crossmatch", "Cross-mat
 const NAV_LEAD = [["home", "My Region", "dash"], ["ljustify", "Justify Today", "chat", "just"], ["lofficers", "My Officers", "users"], ["spares", "My Spare SIMs", "sim"], ["change", "Report a Change", "edit"], ["requests", "My Requests", "list"], ["lmessages", "Message HQ", "msg", "msg"]];
 function renderNav() {
   const items = S.admin ? NAV_ADMIN : NAV_LEAD;
-  $("#nav").innerHTML = `<div class="brand"><img src="hb-leaf.jpg" alt="GLTC"><div><b>HB-Tracker</b><span>${S.admin ? "HQ · all regions" : esc(regionName(S.me.region_id)) + " region"}</span></div></div>` +
+  $("#nav").innerHTML = `<div class="brand"><img src="assets/leaf.png" alt="GLTC"><div><b>HB-Tracker</b><span>${S.admin ? "HQ · all regions" : esc(regionName(S.me.region_id)) + " region"}</span></div></div>` +
     items.map(([k, l, i, b]) => `<a href="#/${k}" data-k="${k}">${ic(i)}${l}${b ? `<span class="badge hidden" data-b="${b}"></span>` : ""}</a>`).join("") +
     `<div class="me"><div class="av">${esc((S.me.full_name || S.me.email)[0].toUpperCase())}</div><div><b>${esc(S.me.full_name || S.me.email)}</b>${S.admin ? "Admin" : "Region lead"}<br><a href="#" id="btnPw" style="color:#9FB0C9;font-size:12px">Change password</a></div><button id="btnOut">Sign out</button></div>`;
   $("#btnOut").onclick = () => signOut();
@@ -154,6 +154,7 @@ async function refreshBell() {
     const rep = await latestReport();
     if (rep) {
       let qq = sb.from("hb_report_rows").select("id", { count: "exact", head: true }).eq("report_id", rep.id).not("issue", "is", null).is("justified_at", null);
+      qq = qq.not("sent_at", "is", null);
       const { count } = await qq; just = count || 0;
     }
     if (S.admin) {
