@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow,noarchive">
+<meta name="theme-color" content="#0B1F3A">
+<title>Sign in</title>
+<link rel="manifest" href="hb-manifest.json">
+<link rel="icon" href="hb-leaf.jpg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="hb-style.css">
+</head>
+<body>
+<div id="login" class="login hidden">
+  <form class="card login-card" id="loginForm" autocomplete="on">
+    <img src="hb-leaf.jpg" alt="" class="login-logo">
+    <h1>Authorized access only</h1>
+    <label>Email<input id="email" type="email" required autocomplete="username"></label>
+    <label id="passWrap">Password<input id="pass" type="password" required minlength="8" autocomplete="current-password"></label>
+    <button class="primary" id="btnLogin" type="submit">Sign in</button>
+    <div class="login-links"><a href="#" id="lnkFirst">First time? Set your password</a><a href="#" id="lnkReset">Forgot password</a></div>
+    <p id="loginMsg" class="msg"></p>
+  </form>
+</div>
+
+<div id="app" class="hidden">
+  <aside id="nav"></aside>
+  <main>
+    <div class="topbar">
+      <button id="btnMenu" class="icon-btn mobile-only" aria-label="Menu">&#9776;</button>
+      <span id="scope" class="muted"></span>
+      <div class="bell-wrap">
+        <button id="btnBell" class="icon-btn" aria-label="Notifications"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"/></svg><span id="bellCount" class="dot hidden"></span></button>
+        <div id="bellPanel" class="bell-panel hidden"></div>
+      </div>
+    </div>
+    <div id="page"></div>
+  </main>
+</div>
+<div id="toast" class="toast hidden"></div>
+<dialog id="dlg"><form method="dialog" id="dlgBody"></form></dialog>
+
+<script src="lib/supabase.js"></script>
+<script src="lib/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+<script src="hb-config.js"></script>
+<script src="hb-report.js"></script>
+<script src="hb-app.js"></script>
+<script src="hb-admin.js"></script>
+<script src="hb-lead.js"></script>
+</body>
+</html>
