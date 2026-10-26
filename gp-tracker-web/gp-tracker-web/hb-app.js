@@ -120,8 +120,9 @@ function renderNav() {
   const items = S.admin ? NAV_ADMIN : NAV_LEAD;
   $("#nav").innerHTML = `<div class="brand"><img src="hb-leaf.jpg" alt="GLTC"><div><b>HB-Tracker</b><span>${S.admin ? "HQ · all regions" : esc(regionName(S.me.region_id)) + " region"}</span></div></div>` +
     items.map(([k, l, i, b]) => `<a href="#/${k}" data-k="${k}">${ic(i)}${l}${b ? `<span class="badge hidden" data-b="${b}"></span>` : ""}</a>`).join("") +
-    `<div class="me"><div class="av">${esc((S.me.full_name || S.me.email)[0].toUpperCase())}</div><div><b>${esc(S.me.full_name || S.me.email)}</b>${S.admin ? "Admin" : "Region lead"}</div><button id="btnOut">Sign out</button></div>`;
+    `<div class="me"><div class="av">${esc((S.me.full_name || S.me.email)[0].toUpperCase())}</div><div><b>${esc(S.me.full_name || S.me.email)}</b>${S.admin ? "Admin" : "Region lead"}<br><a href="#" id="btnPw" style="color:#9FB0C9;font-size:12px">Change password</a></div><button id="btnOut">Sign out</button></div>`;
   $("#btnOut").onclick = () => signOut();
+  $("#btnPw").onclick = e => { e.preventDefault(); dialog(`<h3>Set a new password</h3><label>New password (at least 8 characters)<input name="p" type="password" minlength="8" required autocomplete="new-password"></label><label>Type it again<input name="p2" type="password" minlength="8" required autocomplete="new-password"></label>`, async f => { if (f.p.value !== f.p2.value) throw new Error("The two passwords are different"); const { error } = await sb.auth.updateUser({ password: f.p.value }); if (error) throw error; toast("Password changed. Use it next time you sign in."); }); };
   $("#scope").innerHTML = S.admin ? "Admin view · all regions" : `Lead view · you can only see ${esc(regionName(S.me.region_id))}`;
 }
 $("#btnMenu").onclick = () => $("#nav").classList.toggle("open");
