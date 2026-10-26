@@ -97,7 +97,8 @@ function bumpIdle() { clearTimeout(idleT); idleT = setTimeout(() => signOut("Sig
 async function start(fresh) {
   const { data: { session } } = await sb.auth.getSession();
   if (!session) return showLogin();
-  const me = await q(sb.from("hb_profiles").select("*").eq("user_id", session.user.id).maybeSingle()).catch(() => null);
+  let me = await q(sb.from("hb_profiles").select("*").eq("user_id", session.user.id).maybeSingle()).catch(() => null);
+  if (!me && await rpc("hb_claim_invite").catch(() => false)) me = await q(sb.from("hb_profiles").select("*").eq("user_id", session.user.id).maybeSingle()).catch(() => null);
   if (!me || me.status !== "active") { await sb.auth.signOut(); return showLogin("Invalid sign-in."); }
   S.me = me; S.admin = me.role === "admin";
   S.regions = await q(sb.from("hb_regions").select("*").order("name"));
