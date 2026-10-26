@@ -12,7 +12,8 @@
   function normName(raw) {
     if (!raw) return "";
     const s = String(raw).split("\n")[0].trim();
-    return s.split("_")[0].trim().toLowerCase().replace(/\s+/g, " ");
+    // name = part before the first "_"; also drop a designation glued with "-" (e.g. "Md.Sabbir Hossain-TSO")
+    return s.split("_")[0].replace(/\s*-\s*(sr\.?\s*tso|s\.?am|tso|tss|tsi|asm|am|rsm|rso|dmo|wm|mi|lo|fs|ft)\.?\s*$/i, "").trim().toLowerCase().replace(/\s+/g, " ");
   }
   function nameKey(raw) {
     const words = normName(raw).replace(/\./g, " ").split(/[^\p{L}\p{N}_]+/u).filter(Boolean);

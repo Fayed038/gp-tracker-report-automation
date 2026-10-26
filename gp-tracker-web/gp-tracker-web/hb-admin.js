@@ -143,7 +143,14 @@ P.approvals = async el => {
     `<div class="card">${table(["From", "Region", "Request", "Details", "Sent", tab === "pending" ? "" : "Decision"], reqs.map(r => tr([who(r.created_by), esc(regionName(r.region_id)), esc(REQ[r.kind]), esc(reqSummary(r)) + (r.payload.note ? `<br><span class="muted">${esc(r.payload.note)}</span>` : ""), fmtTime(r.created_at),
       tab === "pending" ? `<div class="acts"><button class="sm" data-rej="${r.id}">Reject</button><button class="sm primary" data-ok="${r.id}">Approve</button>${r.kind === "submit_list" ? `<button class="sm" data-view="${r.id}">View list</button>` : ""}</div>` : `${reqPill(r.status)} ${fmtTime(r.decided_at)}${r.decision_note ? `<br><span class="muted">${esc(r.decision_note)}</span>` : ""}`])), "No requests.")}</div>`;
   el.querySelectorAll("[data-t]").forEach(b => b.onclick = () => { S.apTab = b.dataset.t; reload(); });
-  el.querySelectorAll("[data-view]").forEach(b => b.onclick = () => { const r = reqs.find(x => x.id === +b.dataset.view); dialog(`<h3>Officer list from ${esc(regionName(r.region_id))}</h3>${table(["Name", "Designation", "Territory", "SIM", "Personal"], r.payload.officers.map(o => tr([esc(o.name), esc(o.designation), esc(o.territory), esc(o.sim_number), esc(o.personal_number)])))}`, async () => {}); });
+  el.querySelectorAll("[data-view]").forEach(b => b.onclick = () => { const r = reqs.find(x => x.id === +b.dataset.view), p = r.payload;
+    const sec = (t, rows) => rows ? `<h4 style="margin:8px 0 4px">${t}</h4>${rows}` : "";
+    dialog(`<h3>Officer list update — ${esc(regionName(r.region_id))}</h3>` +
+      sec(`New officers (${(p.add||[]).length})`, (p.add||[]).length && table(["Name", "Designation", "Territory", "SIM", "Personal"], p.add.map(o => tr([esc(o.name), esc(o.designation), esc(o.territory), esc(o.sim_number), esc(o.personal_number)])))) +
+      sec(`Changed (${(p.update||[]).length})`, (p.update||[]).length && table(["Officer", "Change", "Remarks"], p.update.map(u => tr([esc(u.officer_name), Object.entries(u.changes).map(([k, v]) => `${k}: ${esc(u.before[k] || "—")} → <b>${esc(v || "—")}</b>`).join("<br>"), esc(u.remarks)])))) +
+      sec(`Left (${(p.left||[]).length})`, (p.left||[]).length && table(["Officer", "SIM", "Remarks"], p.left.map(o => tr([esc(o.officer_name), esc(o.sim_number), esc(o.remarks)])))) +
+      sec(`Missing from the file (${(p.missing||[]).length}) — not changed`, (p.missing||[]).length && table(["Officer", "SIM"], p.missing.map(o => tr([esc(o.officer_name), esc(o.sim_number)])))) +
+      `<p class="muted">On approval: new officers are added, changes are saved, officers marked Left leave the report and their SIM goes to the HQ pool for you to decide. Missing officers are not changed.</p>`, async () => {}); });
   el.querySelectorAll("[data-ok],[data-rej]").forEach(b => b.onclick = async () => {
     const ok = !!b.dataset.ok; const r = reqs.find(x => x.id === +(b.dataset.ok || b.dataset.rej));
     if (!ok) { dialog(`<h3>Reject request</h3><label>Reason for the lead (optional)<textarea name="n"></textarea></label>`, async f => { await rpc("hb_decide", { p_id: r.id, p_approve: false, p_note: f.n.value || null, p_sim: null }); toast("Rejected"); reload(); refreshBell(); }); return; }
@@ -187,10 +194,12 @@ P.officers = async el => {
         for (const m of missing) HB.regions.push((await q(sb.from("hb_regions").insert({ name: m, kind: /^hq$/i.test(m) ? "hq" : /leaf/i.test(m) ? "leaf" : "field" }).select()))[0]);
         const rid = n => (HB.regions.find(x => x.name.toLowerCase() === (n || "").toLowerCase()) || {}).id;
         const noReg = list.filter(o => !rid(o.region)); if (noReg.length) throw new Error(`${noReg.length} rows have no Region.`);
-        const ins = await q(sb.from("hb_officers").insert(list.map(o => ({ name: o.name, designation: o.designation, region_id: rid(o.region), territory: o.territory, sim_number: o.sim_number || null, personal_number: o.personal_number }))).select());
+        const exist = offs.filter(o => o.status === "active"); const dup = o => exist.some(e => (o.sim_number && e.sim_number === o.sim_number) || (e.name.toLowerCase() === o.name.toLowerCase() && e.region_id === rid(o.region)));
+        const fresh = list.filter(o => !dup(o)); if (!fresh.length) throw new Error("Everyone in this file is already in HB-Tracker. Nothing to import.");
+        const ins = await q(sb.from("hb_officers").insert(fresh.map(o => ({ name: o.name, designation: o.designation, region_id: rid(o.region), territory: o.territory, sim_number: o.sim_number || null, personal_number: o.personal_number }))).select());
         const simRows = ins.filter(o => o.sim_number).map(o => ({ number: o.sim_number, region_id: o.region_id, status: "active", officer_id: o.id, locked: f.hq.checked && HB.regions.find(r => r.id === o.region_id).kind === "hq" }));
         if (simRows.length) await q(sb.from("hb_sims").upsert(simRows, { onConflict: "number", ignoreDuplicates: true }));
-        toast(`${ins.length} officers imported`); reload();
+        toast(`${ins.length} officers imported, ${list.length - fresh.length} already existed (skipped)`); reload();
       });
     } catch (e) { fail(e); } finally { $("#oFile").value = ""; }
   };

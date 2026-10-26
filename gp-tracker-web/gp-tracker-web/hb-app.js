@@ -197,7 +197,7 @@ function reqSummary(r) {
     case "promotion": return `${p.officer_name}: ${p.old_designation || ""} → ${p.designation}`;
     case "need_sim": return p.reason || "Needs a SIM for a new joiner";
     case "edit_officer": return `${p.officer_name}: details update`;
-    case "submit_list": return `${(p.officers || []).length} officers`;
+    case "submit_list": return p.officers ? `${p.officers.length} officers` : `List update: ${(p.add||[]).length} new, ${(p.update||[]).length} changed, ${(p.left||[]).length} left, ${(p.missing||[]).length} missing`;
   }
   return "";
 }

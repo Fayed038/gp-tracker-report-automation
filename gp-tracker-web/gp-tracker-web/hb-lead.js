@@ -10,9 +10,9 @@ L.home = async el => {
   el.innerHTML = head(`${esc(regionName(myRegion()))} region`, `Hello ${esc(HB.me.full_name || "")}, here is what needs you today`) +
     stats([["My officers", offs.length, "active"], ["To justify", todo, rep ? "report " + fmtDate(rep.report_date) : "no report yet", "#C2410C"], ["My spare SIMs", sims.filter(s => s.status === "spare").length, "ready for new joiners", "#15803D"], ["My requests", reqs.length, "waiting for HQ", "#1F5FD1"]]) +
     `<div class="tiles"><a class="tile" href="#/ljustify"><b>Justify today's list</b><span>${todo} officers need a reason</span></a><a class="tile" href="#/change?k=resignation"><b>Officer resigned</b><span>Report it today and say if the SIM came back</span></a><a class="tile" href="#/change?k=new_joiner"><b>New joiner</b><span>Add them and give a spare SIM</span></a><a class="tile" href="#/change?k=transfer"><b>Transfer or promotion</b><span>Move or update an officer</span></a></div>` +
-    (!offs.length ? `<div class="note"><b>First time here?</b> Upload your officer list so HQ can verify it. <button class="sm primary" id="upl">Upload my list</button> <span class="muted">Excel columns: Name, Designation, Territory, Corporate SIM, Personal number</span><input type="file" id="uplF" accept=".xlsx,.xls" class="hidden"></div>` : "") +
+    `<div class="note"><b>Your officer list</b> — download it, correct it in Excel, and upload it back. HQ checks and approves the changes. <div class="acts" style="margin-top:8px"><button class="sm" id="tplDl">Download my list (Excel)</button><button class="sm primary" id="tplUp">Upload updated list</button></div></div>` +
     (anns.length ? `<div class="card"><h2>Announcements from HQ</h2>${anns.map(a => `<div style="border-left:3px solid var(--blue);padding-left:12px;margin-bottom:10px"><b>${esc(a.title)}</b><div>${esc(a.body)}</div><div class="muted" style="font-size:12px">${fmtTime(a.created_at)}</div></div>`).join("")}</div>` : "");
-  const u = $("#upl"); if (u) { u.onclick = () => $("#uplF").click(); $("#uplF").onchange = async () => { try { const list = parseOfficerSheet(sheetObjects(await readExcel($("#uplF").files[0]))); if (!list.length) throw new Error("No rows with a Name column found."); if (!confirm(`Send ${list.length} officers to HQ for verification?`)) return; await send("submit_list", { officers: list }); toast("Sent to HQ"); reload(); } catch (e) { fail(e); } }; }
+  bindListButtons();
 };
 
 const REASONS = { "Couldn't locate": ["Phone off / no network", "Field visit (no signal)", "Leave", "Meeting at office", "Phone problem", "Other"], Absent: ["Leave", "Sick", "Field visit (no signal)", "Phone off", "Other"], "No raw record": ["Number not in Team Tracker", "SIM problem", "Leave", "Other"] };
@@ -35,10 +35,10 @@ L.ljustify = async el => {
 
 L.lofficers = async el => {
   const [offs, sims] = await Promise.all([myOfficers(), q(sb.from("hb_requests").select("*").eq("status", "pending"))]);
-  el.innerHTML = head("My Officers", `${esc(regionName(myRegion()))} only`, `<a href="#/change"><button class="primary">Report a change</button></a>`) + `<div class="filters"><input id="lq" placeholder="Search my officers"></div><div class="card" id="lo"></div>`;
+  el.innerHTML = head("My Officers", `${esc(regionName(myRegion()))} only`, `<button id="tplDl">Download my list (Excel)</button><button id="tplUp">Upload updated list</button><a href="#/change"><button class="primary">Report a change</button></a>`) + `<div class="filters"><input id="lq" placeholder="Search my officers"></div><div class="card" id="lo"></div>`;
   const draw = () => { const s = $("#lq").value.toLowerCase(); const l = offs.filter(o => !s || [o.name, o.sim_number, o.territory].join(" ").toLowerCase().includes(s));
     $("#lo").innerHTML = `<h2>${l.length} officers</h2>` + table(["Name", "Designation", "Territory", "Corporate SIM", "Personal", "Status"], l.map(o => { const pend = sims.find(r => r.payload.officer_id === o.id); return tr([esc(o.name), esc(o.designation), esc(o.territory), esc(o.sim_number || "—"), esc(o.personal_number), pend ? pill(REQ[pend.kind] + " pending", "p-amber") : o.verified ? pill("Active", "p-blue") : pill("Waiting for HQ check", "p-amber")]); }), "No officers yet. Upload your list from My Region."); };
-  $("#lq").oninput = draw; draw();
+  $("#lq").oninput = draw; draw(); bindListButtons();
 };
 
 L.spares = async el => {
@@ -88,3 +88,77 @@ L.lmessages = async el => {
   el.innerHTML = head("Message HQ", "Your private conversation with HQ") + `<div class="chat"><div id="thread" class="card thread"></div>${anns.length ? `<div class="card" style="flex:0 1 300px"><h2>Announcements</h2>${anns.map(a => `<div style="border-left:3px solid var(--blue);padding-left:12px;margin-bottom:10px"><b>${esc(a.title)}</b><div>${esc(a.body)}</div><div class="muted" style="font-size:12px">${fmtDate(a.created_at)}</div></div>`).join("")}</div>` : ""}</div>`;
   drawThread($("#thread"), HB.me.user_id, "HQ", "Only you and HQ can see these messages", msgs);
 };
+
+/* ---------- officer list: template download + safe upload ---------- */
+const TPL_COLS = ["ID (do not change)", "Name", "Designation", "Territory", "Corporate SIM", "Personal Number", "Status", "Remarks"];
+const TPL_RULES = [
+  ["HB-Tracker officer list — how to fill it"],
+  ["1. Do not change the first row (headings) or the ID column."],
+  ["2. One officer per row. Correct any wrong name, designation, territory or number."],
+  ["3. Numbers: 11 digits, like 01709661559. No spaces, dashes or +88."],
+  ["4. Status: Active = working now · Left = has left (write in Remarks whether the SIM was returned) · New = new officer (leave ID empty)."],
+  ["5. A new officer: add a new row at the bottom, leave ID empty, Status = New."],
+  ["6. Do not delete rows. If someone left, set Status = Left."],
+  ["7. Save as .xlsx and upload it in HB-Tracker (My Officers > Upload updated list)."]
+];
+function bindListButtons() {
+  const d = $("#tplDl"), u = $("#tplUp"); if (!d || !u) return;
+  d.onclick = downloadMyList;
+  u.onclick = () => { let f = $("#tplFile"); if (!f) { f = document.createElement("input"); f.type = "file"; f.accept = ".xlsx,.xls"; f.id = "tplFile"; f.className = "hidden"; document.body.appendChild(f); } f.value = ""; f.onchange = () => uploadMyList(f.files[0]); f.click(); };
+}
+async function downloadMyList() {
+  const offs = await myOfficers();
+  const rows = offs.map(o => [o.id, o.name, o.designation || "", o.territory || "", o.sim_number || "", o.personal_number || "", "Active", ""]);
+  const ws = XLSX.utils.aoa_to_sheet([TPL_COLS, ...rows]);
+  ws["!cols"] = [{ wch: 10 }, { wch: 28 }, { wch: 16 }, { wch: 22 }, { wch: 15 }, { wch: 15 }, { wch: 9 }, { wch: 40 }];
+  const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Officers"); XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(TPL_RULES), "How to fill");
+  XLSX.writeFile(wb, `Officer_List_${regionName(myRegion()).replace(/\W+/g, "_")}_${today()}.xlsx`);
+}
+function cleanNum(v) { const d = String(v ?? "").replace(/\D/g, ""); if (!d) return ""; const t = d.length === 13 && d.startsWith("88") ? d.slice(2) : d.length === 10 ? "0" + d : d; return /^01[3-9]\d{8}$/.test(t) ? t : "BAD:" + v; }
+async function uploadMyList(file) {
+  try {
+    const wb = await readExcel(file); const ws = wb.Sheets[wb.SheetNames[0]];
+    const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
+    const hdr = (aoa[0] || []).map(h => String(h).trim().toLowerCase());
+    const need = ["name", "designation", "territory", "corporate sim", "personal number", "status"];
+    const col = k => hdr.findIndex(h => h.startsWith(k));
+    const missingCols = need.filter(k => col(k) < 0);
+    if (missingCols.length) throw new Error("This is not the HB-Tracker template (missing columns: " + missingCols.join(", ") + "). Download the template first.");
+    const iId = hdr.findIndex(h => h.startsWith("id")), iRem = col("remarks");
+    const offs = await myOfficers(); const byId = Object.fromEntries(offs.map(o => [o.id, o]));
+    const errors = [], add = [], update = [], left = [], seenSim = {}, seenId = new Set();
+    aoa.slice(1).forEach((r, k) => {
+      const line = k + 2, g = i => String(r[i] ?? "").trim();
+      if (!r.some(v => String(v).trim())) return;
+      const id = +g(iId) || null, name = g(col("name")), status = (g(col("status")) || "Active").toLowerCase();
+      const sim = cleanNum(g(col("corporate sim"))), per = cleanNum(g(col("personal number")));
+      const rec = { name, designation: g(col("designation")), territory: g(col("territory")), sim_number: sim || null, personal_number: per || null, remarks: iRem >= 0 ? g(iRem) : "" };
+      if (!name) errors.push(`Row ${line}: Name is empty`);
+      if (!["active", "left", "new"].includes(status)) errors.push(`Row ${line}: Status must be Active, Left or New (found "${g(col("status"))}")`);
+      if (String(sim).startsWith("BAD:")) errors.push(`Row ${line}: Corporate SIM "${sim.slice(4)}" is not an 11-digit number`);
+      if (String(per).startsWith("BAD:")) errors.push(`Row ${line}: Personal number "${per.slice(4)}" is not an 11-digit number`);
+      if (sim && !String(sim).startsWith("BAD:") && status !== "left") { if (seenSim[sim]) errors.push(`Row ${line}: SIM ${sim} is also on row ${seenSim[sim]}`); seenSim[sim] = line; }
+      if (id) {
+        const o = byId[id]; if (!o) { errors.push(`Row ${line}: ID ${id} is not one of your officers (do not change the ID column)`); return; }
+        if (seenId.has(id)) { errors.push(`Row ${line}: ID ${id} appears twice`); return; } seenId.add(id);
+        if (status === "left") { left.push({ officer_id: id, officer_name: o.name, sim_number: o.sim_number, remarks: rec.remarks }); return; }
+        const ch = {}; ["name", "designation", "territory", "sim_number", "personal_number"].forEach(f => { if ((rec[f] || "") !== (o[f] || "")) ch[f] = rec[f] || null; });
+        if (Object.keys(ch).length) update.push({ officer_id: id, officer_name: o.name, before: Object.fromEntries(Object.keys(ch).map(f => [f, o[f]])), changes: ch, remarks: rec.remarks });
+      } else if (status === "left") errors.push(`Row ${line}: a new row cannot be "Left"`);
+      else if (name) add.push(rec);
+    });
+    const missing = offs.filter(o => !seenId.has(o.id)).map(o => ({ officer_id: o.id, officer_name: o.name, sim_number: o.sim_number }));
+    const f = dialog(`<h3>Check before sending</h3>` + (errors.length ? `<div class="warn"><b>${errors.length} problem${errors.length > 1 ? "s" : ""} — fix these in Excel and upload again:</b>\n${errors.slice(0, 30).map(esc).join("\n")}${errors.length > 30 ? "\n…" : ""}</div>` :
+      stats([["New officers", add.length, "", "#15803D"], ["Changed", update.length, "", "#1F5FD1"], ["Left", left.length, "", "#C2410C"], ["Missing rows", missing.length, "", "#B45309"]]) +
+      (missing.length ? `<div class="warn">These officers are missing from your file. HQ will ask you about them:\n${missing.map(m => esc(m.officer_name)).join(", ")}</div>` : "") +
+      (update.length ? `<details><summary>Changes (${update.length})</summary>${update.map(u => `<div style="font-size:13px">${esc(u.officer_name)}: ${Object.entries(u.changes).map(([k, v]) => `${k} "${esc(u.before[k] || "")}" → "${esc(v || "")}"`).join(", ")}</div>`).join("")}</details>` : "") +
+      (!add.length && !update.length && !left.length && !missing.length ? `<p>No changes found — your list matches HB-Tracker.</p>` : `<p>HQ approves these changes before they are saved.</p>`)), async () => {
+        if (errors.length) return;
+        if (!add.length && !update.length && !left.length && !missing.length) return;
+        await send("submit_list", { add, update, left, missing, file: file.name });
+        toast("Sent to HQ for approval"); location.hash = "#/requests";
+      });
+    if (errors.length) { const b = f.querySelector("#dlgOk"); b.textContent = "OK"; }
+    else { const b = f.querySelector("#dlgOk"); if (add.length || update.length || left.length || missing.length) b.textContent = "Send to HQ"; }
+  } catch (e) { fail(e); }
+}
