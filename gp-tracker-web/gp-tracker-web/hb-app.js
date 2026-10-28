@@ -94,9 +94,16 @@ let idleT;
 function bumpIdle() { clearTimeout(idleT); idleT = setTimeout(() => signOut("Signed out after " + C.autoSignOutMinutes + " minutes without activity."), C.autoSignOutMinutes * 60000); }
 ["click", "keydown", "touchstart"].forEach(ev => document.addEventListener(ev, () => S.me && bumpIdle(), { passive: true }));
 
+const OWNER = "hufayed19@gmail.com";
+let maintHq = false;
+function showMaint() { $("#app").classList.add("hidden"); $("#login").classList.add("hidden"); $("#maint").classList.remove("hidden"); document.title = "Under maintenance"; }
+$("#lnkHq").onclick = e => { e.preventDefault(); maintHq = true; $("#maint").classList.add("hidden"); showLogin(); };
 async function start(fresh) {
+  const maint = await rpc("hb_maintenance").catch(() => false);
   const { data: { session } } = await sb.auth.getSession();
-  if (!session) return showLogin();
+  if (maint && session && (session.user.email || "").toLowerCase() !== OWNER) { await sb.auth.signOut(); return showMaint(); }
+  if (!session) return maint && !maintHq ? showMaint() : showLogin();
+  $("#maint").classList.add("hidden");
   let me = await q(sb.from("hb_profiles").select("*").eq("user_id", session.user.id).maybeSingle()).catch(() => null);
   if (!me && await rpc("hb_claim_invite").catch(() => false)) me = await q(sb.from("hb_profiles").select("*").eq("user_id", session.user.id).maybeSingle()).catch(() => null);
   if (!me || me.status !== "active") { await sb.auth.signOut(); return showLogin("Invalid sign-in."); }
