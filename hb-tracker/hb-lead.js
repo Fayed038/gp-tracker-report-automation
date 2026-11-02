@@ -101,6 +101,7 @@ const TPL_RULES = [
   ["6. Do not delete rows. If someone left, set Status = Left."],
   ["7. Save as .xlsx and upload it in HB-Tracker (My Officers > Upload updated list)."]
 ];
+const TPL_FIRST = [["HB-Tracker: officer list (fill once)"], [""], ["1. One row for every officer in your region. Include yourself if you have a company SIM."], ["2. Name: full name. Designation: TSO, TSS, ASM ... Territory: the area the officer covers."], ["3. Corporate SIM: company number, 11 digits (e.g. 01709661500). Leave empty if there is no company SIM."], ["4. Personal Number: the officer's own number, 11 digits."], ["5. Remarks: anything HQ should know (optional)."], ["6. Do not change the column names. Save, then on the website: My Region > Upload list."]];
 function bindListButtons() {
   const d = $("#tplDl"), u = $("#tplUp"); if (!d || !u) return;
   d.onclick = downloadMyList;
@@ -108,6 +109,12 @@ function bindListButtons() {
 }
 async function downloadMyList() {
   const offs = await myOfficers();
+  if (!offs.length) {
+    const ws0 = XLSX.utils.aoa_to_sheet([["Name", "Designation", "Territory", "Corporate SIM", "Personal Number", "Remarks"], ["", "", "", "", "", ""]]);
+    ws0["!cols"] = [{ wch: 30 }, { wch: 16 }, { wch: 22 }, { wch: 16 }, { wch: 16 }, { wch: 34 }];
+    const wb0 = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb0, ws0, "Officers"); XLSX.utils.book_append_sheet(wb0, XLSX.utils.aoa_to_sheet(TPL_FIRST), "How to fill");
+    return XLSX.writeFile(wb0, `Officer_List_${regionName(myRegion()).replace(/\W+/g, "_")}.xlsx`);
+  }
   const rows = offs.map(o => [o.id, o.name, o.designation || "", o.territory || "", o.sim_number || "", o.personal_number || "", "Active", ""]);
   const ws = XLSX.utils.aoa_to_sheet([TPL_COLS, ...rows]);
   ws["!cols"] = [{ wch: 10 }, { wch: 28 }, { wch: 16 }, { wch: 22 }, { wch: 15 }, { wch: 15 }, { wch: 9 }, { wch: 40 }];
@@ -120,7 +127,7 @@ async function uploadMyList(file) {
     const wb = await readExcel(file); const ws = wb.Sheets[wb.SheetNames[0]];
     const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
     const hdr = (aoa[0] || []).map(h => String(h).trim().toLowerCase());
-    const need = ["name", "designation", "territory", "corporate sim", "personal number", "status"];
+    const need = ["name", "designation", "territory", "corporate sim", "personal number"];
     const col = k => hdr.findIndex(h => h.startsWith(k));
     const missingCols = need.filter(k => col(k) < 0);
     if (missingCols.length) throw new Error("This is not the HB-Tracker template (missing columns: " + missingCols.join(", ") + "). Download the template first.");
