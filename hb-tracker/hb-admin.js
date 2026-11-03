@@ -61,7 +61,7 @@ P.crossmatch = async el => {
       }
       if (!Object.keys(tt).length) return toast("No mobile numbers found in this file. Use the Team Tracker user/employee export.");
     }
-    if (files.length && Object.keys(tt).length) { try { await TT.save(tt); toast(`Team Tracker list saved (${Object.keys(tt).length} users)`); } catch (e) { fail(e); } }
+    if (files.length && Object.keys(tt).length) { for (const f of files) FILES.save(f, "team_tracker"); try { await TT.save(tt); toast(`Team Tracker list saved (${Object.keys(tt).length} users)`); } catch (e) { fail(e); } }
     const list = offs.filter(o => !rid || o.region_id === rid);
     const res = []; const seen = new Set();
     list.forEach(o => {
@@ -110,6 +110,7 @@ P.report = async el => {
       const saved = (await q(sb.from("hb_reports").insert({ report_date: ds, summary: { ...rep.stats, issues, files: files.map(f => f.name), unmatchedCl: rep.unmatchedCl } }).select()))[0];
       const rows = rep.zones.flatMap(z => z.rows.map(r => ({ report_id: saved.id, report_date: ds, officer_id: r.oid, region_id: r.region_id, officer_name: r.name, sim_number: r.mobile, checkpoints: r, issue: /Inactive/.test(r.remarks) ? null : (r.remarks || null) })));
       for (let i = 0; i < rows.length; i += 500) await q(sb.from("hb_report_rows").insert(rows.slice(i, i + 500)));
+      for (const f of files) await FILES.save(f, "daily_raw", ds);
       S.lastRep = rep;
       $("#rpOut").innerHTML = stats([["On report", rep.stats.officers], ["Located", rep.stats.officers - rep.stats.cl_tracker_set - rep.stats.no_raw_record - rep.stats.absent_set, "", "#15803D"], ["Couldn't locate", rep.stats.cl_tracker_set, "review in Justifications", "#C2410C"], ["Absent / no record", rep.stats.absent_set + rep.stats.no_raw_record, "review in Justifications", "#C2410C"]]) +
         (rep.unmatchedCl.length ? `<div class="warn">Team Tracker "Couldn't locate" names not matched to any officer:\n${rep.unmatchedCl.map(esc).join(", ")}</div>` : "") +

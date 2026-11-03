@@ -85,3 +85,77 @@ async function officerProfile(o) {
   const ok = $("#dlgOk"); if (ok) ok.textContent = "Close";
   $("#opEdit").onclick = () => { $("#dlg").close(); officerDialog(o); };
 }
+
+/* ---------- Stored files (Supabase Storage, admin only) ---------- */
+const FILES = {
+  KINDS: { daily_raw: "Daily report raw file", team_tracker: "Team Tracker list", track_history: "Track History", other: "Other" },
+  async save(file, kind, report_date = null) {
+    try {
+      const d = new Date().toISOString().slice(0, 10), safe = file.name.replace(/[^\w.\-]+/g, "_");
+      const path = `${kind}/${d}/${Date.now()}_${safe}`;
+      const { error } = await sb.storage.from("hb-files").upload(path, file, { upsert: false, contentType: file.type || "application/octet-stream" });
+      if (error) throw error;
+      await q(sb.from("hb_files").insert({ kind, name: file.name, path, size: file.size, report_date }));
+      return true;
+    } catch (e) { console.error(e); toast("File could not be stored: " + (e.message || e), 5000); return false; }
+  },
+  async open(path, name) {
+    const { data, error } = await sb.storage.from("hb-files").createSignedUrl(path, 120, { download: name });
+    if (error) return fail(error);
+    const a = document.createElement("a"); a.href = data.signedUrl; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  },
+  size: n => n == null ? "" : n > 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(n / 1024)) + " KB"
+};
+
+P.files = async el => {
+  el.innerHTML = head("Files", "Every file uploaded to HB-Tracker is stored here. Delete what is no longer needed.", `<input type="file" id="fUp" multiple class="hidden"><button id="fAdd">Upload a file</button>`) +
+    `<div class="filters"><select id="fK"><option value="">All types</option>${Object.entries(FILES.KINDS).map(([k, l]) => `<option value="${k}">${l}</option>`).join("")}</select><label>From<input type="date" id="fFrom"></label><label>To<input type="date" id="fTo"></label><input id="fQ" placeholder="Search file name"></div><div id="fOut"></div>`;
+  let files = [];
+  const loadAll = async () => { files = await q(sb.from("hb_files").select("*").order("uploaded_at", { ascending: false }).limit(2000)); draw(); };
+  const draw = () => {
+    const k = $("#fK").value, a = $("#fFrom").value, b = $("#fTo").value, s = $("#fQ").value.toLowerCase();
+    const list = files.filter(f => (!k || f.kind === k) && (!a || f.uploaded_at.slice(0, 10) >= a) && (!b || f.uploaded_at.slice(0, 10) <= b) && (!s || f.name.toLowerCase().includes(s)));
+    const total = list.reduce((t, f) => t + (f.size || 0), 0);
+    $("#fOut").innerHTML = `<div class="card"><h2>${list.length} file${list.length === 1 ? "" : "s"} <span class="muted" style="font-weight:400;font-size:14px">· ${FILES.size(total)}</span></h2>${table(["File", "Type", "Report date", "Uploaded", "Size", ""], list.map(f => tr([esc(f.name), esc(FILES.KINDS[f.kind] || f.kind), f.report_date ? fmtDate(f.report_date) : "", fmtTime(f.uploaded_at), FILES.size(f.size), `<div class="acts"><button class="sm" data-dl="${f.id}">Download</button><button class="sm danger" data-del="${f.id}">Delete</button></div>`])), "No files stored yet. Files are saved automatically when you upload them in Daily Report, Cross-match or Track History.")}</div>` +
+      `<div class="note">Deleting a file removes only the file. Saved daily reports stay in Report History.</div>`;
+    $("#fOut").querySelectorAll("[data-dl]").forEach(x => x.onclick = () => { const f = files.find(y => y.id === +x.dataset.dl); FILES.open(f.path, f.name); });
+    $("#fOut").querySelectorAll("[data-del]").forEach(x => x.onclick = () => { const f = files.find(y => y.id === +x.dataset.del); dialog(`<h3>Delete this file?</h3><p><b>${esc(f.name)}</b><br><span class="muted">${esc(FILES.KINDS[f.kind] || f.kind)} · ${fmtTime(f.uploaded_at)}</span></p><p>The file is removed permanently.${f.kind === "daily_raw" ? " The saved daily report itself is not affected." : ""}</p>`, async () => {
+      const { error } = await sb.storage.from("hb-files").remove([f.path]); if (error) throw error;
+      await q(sb.from("hb_files").delete().eq("id", f.id)); toast("File deleted"); loadAll(); }); });
+  };
+  ["#fK", "#fFrom", "#fTo", "#fQ"].forEach(s => $(s).oninput = draw);
+  $("#fAdd").onclick = () => $("#fUp").click();
+  $("#fUp").onchange = async () => { for (const f of $("#fUp").files) await FILES.save(f, "other"); toast("Stored"); loadAll(); };
+  loadAll();
+};
+
+/* ---------- Report History with filters (replaces the simple list) ---------- */
+P.history = async el => {
+  const [reps, stored] = await Promise.all([q(sb.from("hb_reports").select("*").order("report_date", { ascending: false }).limit(1000)), q(sb.from("hb_files").select("id,name,path,report_date").eq("kind", "daily_raw")).catch(() => [])]);
+  el.innerHTML = head("Report History", "Every daily report is saved permanently and cannot be edited", `<button id="hBk">Download full backup</button>`) +
+    `<div class="filters"><label>From<input type="date" id="hFrom"></label><label>To<input type="date" id="hTo"></label><label>Region<select id="hR">${regionOptions("", { all: "All regions" })}</select></label><input id="hQ" placeholder="Officer name or number (search inside reports)"><button id="hGo">Search</button></div><div id="hList"></div><div id="hOut"></div>`;
+  $("#hBk").onclick = fullBackup;
+  const rid = () => +$("#hR").value || null;
+  const load = async id => { let rows = await q(sb.from("hb_report_rows").select("*").eq("report_id", id).order("id")); if (rid()) rows = rows.filter(r => r.region_id === rid()); return { zones: zonesFromRows(rows), date: reps.find(r => r.id === id).report_date }; };
+  const tag = () => rid() ? "_" + regionName(rid()).replace(/\W+/g, "_") : "";
+  const drawList = () => {
+    const a = $("#hFrom").value, b = $("#hTo").value;
+    const list = reps.filter(r => (!a || r.report_date >= a) && (!b || r.report_date <= b));
+    $("#hList").innerHTML = `<div class="card"><h2>${list.length} report${list.length === 1 ? "" : "s"}${rid() ? " · " + esc(regionName(rid())) + " only" : ""}</h2>${table(["Date", "Officers", "Not tracked", "Raw files", ""], list.map(r => { const fs = stored.filter(f => f.report_date === r.report_date); return tr([fmtDate(r.report_date), r.summary?.officers ?? "", r.summary?.issues ?? "", fs.length ? fs.map(f => `<a href="#" data-f="${f.id}">${esc(f.name)}</a>`).join("<br>") : esc((r.summary?.files || []).join(", ")), `<div class="acts"><button class="sm" data-o="${r.id}">Open</button><button class="sm" data-p="${r.id}">PDF</button><button class="sm" data-c="${r.id}">CSV</button></div>`]); }), "No reports in this period.")}</div>`;
+    $("#hList").querySelectorAll("[data-f]").forEach(x => x.onclick = e => { e.preventDefault(); const f = stored.find(y => y.id === +x.dataset.f); FILES.open(f.path, f.name); });
+    $("#hList").querySelectorAll("[data-o]").forEach(x => x.onclick = async () => { const { zones, date } = await load(+x.dataset.o); $("#hOut").innerHTML = `<div class="card">${zones.length ? renderReportHtml(zones, date) : "No officers of this region in that report."}</div>`; $("#hOut").scrollIntoView(); });
+    $("#hList").querySelectorAll("[data-p]").forEach(x => x.onclick = async () => { const { zones, date } = await load(+x.dataset.p); reportPdf(zones, date, `GPS_Report_${date}${tag()}.pdf`); });
+    $("#hList").querySelectorAll("[data-c]").forEach(x => x.onclick = async () => { const { zones, date } = await load(+x.dataset.c); downloadCsv(`GPS_Report_${date}${tag()}.csv`, reportCsvRows(zones)); });
+  };
+  ["#hFrom", "#hTo", "#hR"].forEach(s => $(s).onchange = () => { $("#hOut").innerHTML = ""; drawList(); });
+  $("#hGo").onclick = async () => {
+    const s = $("#hQ").value.trim(); if (!s) { $("#hOut").innerHTML = ""; return; }
+    const a = $("#hFrom").value, b = $("#hTo").value; const dig = s.replace(/\D/g, "");
+    let qq = sb.from("hb_report_rows").select("report_date,region_id,officer_name,sim_number,issue,reason,note,accepted").order("report_date", { ascending: false }).limit(500);
+    qq = dig.length >= 5 ? qq.ilike("sim_number", `%${dig.slice(-6)}%`) : qq.ilike("officer_name", `%${s}%`);
+    if (a) qq = qq.gte("report_date", a); if (b) qq = qq.lte("report_date", b); if (rid()) qq = qq.eq("region_id", rid());
+    const rows = await q(qq);
+    $("#hOut").innerHTML = `<div class="card"><h2>${rows.length} result${rows.length === 1 ? "" : "s"} for "${esc(s)}"</h2>${table(["Date", "Officer", "Region", "Number", "Result", "Reason"], rows.map(r => tr([fmtDate(r.report_date), esc(r.officer_name), esc(regionName(r.region_id)), esc(r.sim_number), r.issue ? pill(r.issue, "p-red") : pill("Tracked", "p-green"), r.reason ? esc(r.reason) + (r.note ? `<br><span class="muted">${esc(r.note)}</span>` : "") : ""])), "Nothing found.")}</div>`;
+  };
+  drawList();
+};

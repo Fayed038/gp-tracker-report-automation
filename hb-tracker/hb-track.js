@@ -45,7 +45,7 @@ P.track = async el => {
   $("#tkF").onchange = async e => {
     const f = e.target.files[0]; if (!f) return;
     try {
-      const rows = TK.parse(await readExcel(f)); if (!rows.length) throw new Error("No records in this file");
+      const rows = TK.parse(await readExcel(f)); if (!rows.length) throw new Error("No records in this file"); FILES.save(f, "track_history");
       const off = (await q(sb.from("hb_officers").select("name,designation,territory,region_id,sim_number").eq("sim_number", rows[0].mob)))[0];
       const a = TK.analyse(rows), html = TK.html(rows, a, off);
       const nm = (off ? off.name : rows[0].emp.split("_")[0]).replace(/[^\w]+/g, "_");
