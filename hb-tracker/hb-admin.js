@@ -46,13 +46,15 @@ P.crossmatch = async el => {
   el.innerHTML = head("Cross-match", "Compare officer lists with a GP Team Tracker export, then finalize a region") +
     `<div class="card"><div class="filters"><label>Region<select id="cmR">${regionOptions("", { all: "All regions" })}</select></label><label>GP Team Tracker export (.xlsx)<input type="file" id="cmF" accept=".xlsx,.xls" multiple></label><button class="primary" id="cmGo" style="align-self:flex-end">Compare</button></div><p class="muted" style="margin:0">Numbers are matched first; names are compared ignoring MD/Mst prefixes and word order.</p></div><div id="cmOut"></div>`;
   $("#cmGo").onclick = async () => {
-    const files = [...$("#cmF").files]; if (!files.length) return toast("Choose the export file first");
+    const files = [...$("#cmF").files];
     const rid = +$("#cmR").value || null;
-    const tt = {};
+    let tt = {};
+    if (!files.length) { const ro = await TT.load(); if (!ro.batch) return toast("Choose the Team Tracker export first"); tt = ro.map; toast(`Using the saved Team Tracker list of ${fmtDate(ro.batch)}`); }
     for (const f of files) {
       const wb = await readExcel(f);
       for (const sn of wb.SheetNames) { const rows = XLSX.utils.sheet_to_json(wb.Sheets[sn], { header: 1, raw: true }); rows.slice(1).forEach(r => { const mk = GPReport.normMobile(r[1]); if (mk && !tt[mk]) tt[mk] = String(r[0] || "").split("\n")[0].split("_")[0].trim(); }); }
     }
+    if (files.length && Object.keys(tt).length) { try { await TT.save(tt); toast(`Team Tracker list saved (${Object.keys(tt).length} users)`); } catch (e) { fail(e); } }
     const list = offs.filter(o => !rid || o.region_id === rid);
     const res = []; const seen = new Set();
     list.forEach(o => {
@@ -152,14 +154,14 @@ P.approvals = async el => {
     `<div class="card">${table(["From", "Region", "Request", "Details", "Sent", tab === "pending" ? "" : "Decision"], reqs.map(r => tr([who(r.created_by), esc(regionName(r.region_id)), esc(REQ[r.kind]), esc(reqSummary(r)) + (r.payload.note ? `<br><span class="muted">${esc(r.payload.note)}</span>` : ""), fmtTime(r.created_at),
       tab === "pending" ? `<div class="acts"><button class="sm" data-rej="${r.id}">Reject</button><button class="sm primary" data-ok="${r.id}">Approve</button>${r.kind === "submit_list" ? `<button class="sm" data-view="${r.id}">View list</button>` : ""}</div>` : `${reqPill(r.status)} ${fmtTime(r.decided_at)}${r.decision_note ? `<br><span class="muted">${esc(r.decision_note)}</span>` : ""}`])), "No requests.")}</div>`;
   el.querySelectorAll("[data-t]").forEach(b => b.onclick = () => { S.apTab = b.dataset.t; reload(); });
-  el.querySelectorAll("[data-view]").forEach(b => b.onclick = () => { const r = reqs.find(x => x.id === +b.dataset.view), p = r.payload;
+  el.querySelectorAll("[data-view]").forEach(b => b.onclick = async () => { const r = reqs.find(x => x.id === +b.dataset.view), p = r.payload; const ro = await TT.load().catch(() => ({ map: {}, batch: null }));
     const sec = (t, rows) => rows ? `<h4 style="margin:8px 0 4px">${t}</h4>${rows}` : "";
     dialog(`<h3>Officer list update — ${esc(regionName(r.region_id))}</h3>` +
-      sec(`New officers (${(p.add||[]).length})`, (p.add||[]).length && table(["Name", "Designation", "Territory", "SIM", "Personal"], p.add.map(o => tr([esc(o.name), esc(o.designation), esc(o.territory), esc(o.sim_number), esc(o.personal_number)])))) +
+      sec(`New officers (${(p.add||[]).length})`, (p.add||[]).length && table(["Name", "Designation", "Territory", "SIM", "Personal", "Team Tracker"], p.add.map(o => tr([esc(o.name), esc(o.designation), esc(o.territory), esc(o.sim_number), esc(o.personal_number), TT.status(ro, o.name, o.sim_number)])))) +
       sec(`Changed (${(p.update||[]).length})`, (p.update||[]).length && table(["Officer", "Change", "Remarks"], p.update.map(u => tr([esc(u.officer_name), Object.entries(u.changes).map(([k, v]) => `${k}: ${esc(u.before[k] || "—")} → <b>${esc(v || "—")}</b>`).join("<br>"), esc(u.remarks)])))) +
       sec(`Left (${(p.left||[]).length})`, (p.left||[]).length && table(["Officer", "SIM", "Remarks"], p.left.map(o => tr([esc(o.officer_name), esc(o.sim_number), esc(o.remarks)])))) +
       sec(`Missing from the file (${(p.missing||[]).length}) — not changed`, (p.missing||[]).length && table(["Officer", "SIM"], p.missing.map(o => tr([esc(o.officer_name), esc(o.sim_number)])))) +
-      `<p class="muted">On approval: new officers are added, changes are saved, officers marked Left leave the report and their SIM goes to the HQ pool for you to decide. Missing officers are not changed.</p>`, async () => {}); });
+      TT.note(ro) + `<p class="muted">On approval: new officers are added, changes are saved, officers marked Left leave the report and their SIM goes to the HQ pool for you to decide. Missing officers are not changed.</p>`, async () => {}); });
   el.querySelectorAll("[data-ok],[data-rej]").forEach(b => b.onclick = async () => {
     const ok = !!b.dataset.ok; const r = reqs.find(x => x.id === +(b.dataset.ok || b.dataset.rej));
     if (!ok) { dialog(`<h3>Reject request</h3><label>Reason for the lead (optional)<textarea name="n"></textarea></label>`, async f => { await rpc("hb_decide", { p_id: r.id, p_approve: false, p_note: f.n.value || null, p_sim: null }); toast("Rejected"); reload(); refreshBell(); }); return; }
@@ -188,7 +190,7 @@ P.officers = async el => {
       const sim = sims.find(x => x.number === o.sim_number);
       return tr([esc(o.name) + (o.verified ? "" : ` ${pill("not cross-matched", "p-amber")}`), esc(o.designation), esc(regionName(o.region_id)), esc(o.territory), esc(o.sim_number || "—") + (sim?.locked ? " " + pill("HQ locked", "p-navy") : ""), esc(o.personal_number), pill(o.status, o.status === "active" ? "p-blue" : o.status === "left" ? "p-red" : "")], `class="click" data-id="${o.id}"`);
     }));
-    $("#oOut").querySelectorAll("[data-id]").forEach(t => t.onclick = () => officerDialog(offs.find(o => o.id === +t.dataset.id)));
+    $("#oOut").querySelectorAll("[data-id]").forEach(t => t.onclick = () => officerProfile(offs.find(o => o.id === +t.dataset.id)));
   };
   ["#oQ", "#oR", "#oS"].forEach(s => $(s).oninput = draw);
   $("#oAdd").onclick = () => officerDialog(null);
