@@ -313,17 +313,21 @@ P.users = async el => {
   el.innerHTML = head("Users", "Who can sign in, their role and region, and everything they do", `<button class="primary" id="uInv">Invite user</button>`) +
     `<div class="tabs">${[["users", "All users"], ["regions", "Regions"], ["log", "Activity log"]].map(([k, l]) => `<button data-t="${k}" class="${k === tab ? "on" : ""}">${l}</button>`).join("")}</div><div id="uOut"></div>`;
   el.querySelectorAll("[data-t]").forEach(b => b.onclick = () => { S.uTab = b.dataset.t; reload(); });
-  $("#uInv").onclick = () => dialog(`<h3>Invite a user</h3><div class="fgrid"><label>Full name<input name="n" required></label><label>Email<input name="e" type="email" required></label><label>Role<select name="r"><option value="lead">Region lead</option><option value="admin">Admin</option></select></label><label>Region (leads)<select name="g">${regionOptions("", { fieldOnly: true })}</select></label></div><p class="muted">Then tell them: open HB-Tracker, click "First time? Set your password", and use this email.</p>`, async f => {
+  $("#uInv").onclick = () => dialog(`<h3>Invite a user</h3><div class="fgrid"><label>Full name<input name="n" required></label><label>Email<input name="e" type="email" required></label><label>Role<select name="r"><option value="lead">Region lead</option><option value="admin">Admin</option></select></label><label>Region (leads)<select name="g">${regionOptions("", { lead: true })}</select></label></div><p class="muted">Then tell them: open HB-Tracker, click "First time? Set your password", and use this email.</p>`, async f => {
     if (f.r.value === "admin" && !confirm("Admins can see and change everything. Continue?")) return;
     await rpc("hb_invite", { p_email: f.e.value.trim(), p_name: f.n.value.trim(), p_role: f.r.value, p_region: f.r.value === "lead" ? +f.g.value : null });
     toast("Invited"); reload();
   });
   const out = $("#uOut");
   if (tab === "users") {
-    const [profs, invs] = await Promise.all([q(sb.from("hb_profiles").select("*").order("role").order("full_name")), q(sb.from("hb_invites").select("*"))]);
-    out.innerHTML = `<div class="card">${table(["Name", "Email", "Role", "Region", "Last active", "Status", ""], profs.map(p => tr([esc(p.full_name), esc(p.email),
+    const [profs, invs0, offs, lists] = await Promise.all([q(sb.from("hb_profiles").select("*").order("role").order("full_name")), q(sb.from("hb_invites").select("*")), q(sb.from("hb_officers").select("region_id").eq("status", "active")), q(sb.from("hb_requests").select("region_id,status,created_at").eq("kind", "submit_list").order("created_at", { ascending: false }))]);
+    const signed = new Set(profs.map(p => (p.email || "").toLowerCase())), invs = invs0.filter(i => !signed.has((i.email || "").toLowerCase()));
+    const listCell = p => { if (p.role !== "lead") return "—"; const n = offs.filter(o => o.region_id === p.region_id).length, r = lists.find(x => x.region_id === p.region_id); if (r && r.status === "pending") return pill("Waiting for approval", "p-amber"); if (n) return pill(`${n} officers`, "p-green"); if (r && r.status === "rejected") return pill("Rejected, re-upload", "p-red"); return pill("Not uploaded", "p-red"); };
+    const order = p => p.role !== "lead" ? 0 : offs.some(o => o.region_id === p.region_id) ? 3 : lists.some(x => x.region_id === p.region_id && x.status === "pending") ? 2 : 1;
+    profs.sort((a, b) => order(a) - order(b));
+    out.innerHTML = stats([["Leads signed up", profs.filter(p => p.role === "lead").length], ["List approved", profs.filter(p => order(p) === 3).length, "", "#15803D"], ["Waiting for approval", profs.filter(p => order(p) === 2).length, "", "#B45309"], ["Not uploaded / not signed up", profs.filter(p => order(p) === 1).length + invs.filter(i => i.role === "lead").length, "", "#C2410C"]]) + `<div class="card">${table(["Name", "Email", "Role", "Region", "Officer list", "Last active", "Status", ""], profs.map(p => tr([esc(p.full_name), esc(p.email),
       p.is_owner ? "Admin (owner)" : `<select data-role="${p.user_id}"><option value="lead" ${p.role === "lead" ? "selected" : ""}>Region lead</option><option value="admin" ${p.role === "admin" ? "selected" : ""}>Admin</option></select>`,
-      p.role === "admin" ? "All" : `<select data-reg="${p.user_id}">${regionOptions(p.region_id, { fieldOnly: true })}</select>`, fmtTime(p.last_seen),
+      p.role === "admin" ? "All" : `<select data-reg="${p.user_id}">${regionOptions(p.region_id, { lead: true })}</select>`, listCell(p), fmtTime(p.last_seen),
       pill(p.status, p.status === "active" ? "p-green" : "p-red"),
       p.is_owner ? `<span class="muted">cannot be removed</span>` : `<div class="acts">${p.status === "active" ? `<button class="sm" data-dis="${p.user_id}">Disable</button>` : `<button class="sm" data-en="${p.user_id}">Enable</button>`}<button class="sm danger" data-rm="${p.user_id}">Remove</button></div>`])))}</div>` +
       (invs.length ? `<div class="card"><h2>Invited, not signed up yet</h2>${table(["Name", "Email", "Role", "Region"], invs.map(i => tr([esc(i.full_name), esc(i.email), i.role, esc(regionName(i.region_id))])))}</div>` : "") +

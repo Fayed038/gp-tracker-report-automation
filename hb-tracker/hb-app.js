@@ -27,8 +27,8 @@ function table(cols, rows, empty = "Nothing here yet.") {
 const tr = (cells, attrs = "") => `<tr ${attrs}>${cells.map(c => `<td>${c ?? ""}</td>`).join("")}</tr>`;
 function head(t, sub, acts = "") { return `<div class="head"><div><h1>${t}</h1>${sub ? `<p>${sub}</p>` : ""}</div><div class="acts">${acts}</div></div>`; }
 function stats(items) { return `<div class="stats">${items.map(([l, v, s, c]) => `<div class="stat"><div class="l">${l}</div><div class="v" style="color:${c || "inherit"}">${v}</div><div class="s">${s || ""}</div></div>`).join("")}</div>`; }
-function regionOptions(sel, { all, fieldOnly } = {}) {
-  return (all ? `<option value="">${all}</option>` : "") + S.regions.filter(r => !fieldOnly || r.kind === "field").map(r => `<option value="${r.id}" ${+sel === r.id ? "selected" : ""}>${esc(r.name)}</option>`).join("");
+function regionOptions(sel, { all, fieldOnly, lead } = {}) {
+  return (all ? `<option value="">${all}</option>` : "") + S.regions.filter(r => lead ? (r.kind !== "hq" || r.id === +sel || r.name === "HQ Test") : (!fieldOnly || r.kind === "field")).map(r => `<option value="${r.id}" ${+sel === r.id ? "selected" : ""}>${esc(r.name)}</option>`).join("");
 }
 function dialog(html, onSubmit) {
   const d = $("#dlg"), f = $("#dlgBody");
