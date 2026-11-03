@@ -52,7 +52,14 @@ P.crossmatch = async el => {
     if (!files.length) { const ro = await TT.load(); if (!ro.batch) return toast("Choose the Team Tracker export first"); tt = ro.map; toast(`Using the saved Team Tracker list of ${fmtDate(ro.batch)}`); }
     for (const f of files) {
       const wb = await readExcel(f);
-      for (const sn of wb.SheetNames) { const rows = XLSX.utils.sheet_to_json(wb.Sheets[sn], { header: 1, raw: true }); rows.slice(1).forEach(r => { const mk = GPReport.normMobile(r[1]); if (mk && !tt[mk]) tt[mk] = String(r[0] || "").split("\n")[0].split("_")[0].trim(); }); }
+      for (const sn of wb.SheetNames) {
+        const rows = XLSX.utils.sheet_to_json(wb.Sheets[sn], { header: 1, raw: true });
+        let hi = rows.slice(0, 10).findIndex(r => r.some(c => /mobile/i.test(String(c))));
+        let mc = 1, nc = 0;
+        if (hi >= 0) { const h = rows[hi].map(c => String(c ?? "").toLowerCase()); mc = h.findIndex(c => c.includes("mobile")); const n = h.findIndex(c => /^(employee )?name/.test(c.trim())); nc = n >= 0 ? n : 0; } else hi = 0;
+        rows.slice(hi + 1).forEach(r => { const mk = GPReport.normMobile(r[mc]); if (mk && !tt[mk]) tt[mk] = String(r[nc] || "").split("\n")[0].trim(); });
+      }
+      if (!Object.keys(tt).length) return toast("No mobile numbers found in this file. Use the Team Tracker user/employee export.");
     }
     if (files.length && Object.keys(tt).length) { try { await TT.save(tt); toast(`Team Tracker list saved (${Object.keys(tt).length} users)`); } catch (e) { fail(e); } }
     const list = offs.filter(o => !rid || o.region_id === rid);
