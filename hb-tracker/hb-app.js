@@ -30,9 +30,10 @@ function stats(items) { return `<div class="stats">${items.map(([l, v, s, c]) =>
 function regionOptions(sel, { all, fieldOnly, lead } = {}) {
   return (all ? `<option value="">${all}</option>` : "") + S.regions.filter(r => lead ? (r.kind !== "hq" || r.id === +sel || r.name === "HQ Test") : (!fieldOnly || r.kind === "field")).map(r => `<option value="${r.id}" ${+sel === r.id ? "selected" : ""}>${esc(r.name)}</option>`).join("");
 }
-function dialog(html, onSubmit) {
+function dialog(html, onSubmit, { locked } = {}) {
   const d = $("#dlg"), f = $("#dlgBody");
-  f.innerHTML = html + `<p class="msg" id="dlgMsg"></p><div class="dacts"><button value="cancel" formnovalidate>Cancel</button><button class="primary" value="ok" id="dlgOk">OK</button></div>`;
+  f.innerHTML = html + `<p class="msg" id="dlgMsg"></p><div class="dacts">${locked ? "" : `<button value="cancel" formnovalidate>Cancel</button>`}<button class="primary" value="ok" id="dlgOk">OK</button></div>`;
+  d.oncancel = locked ? e => e.preventDefault() : null; // locked: no Cancel button and Esc does nothing
   f.onsubmit = async ev => {
     if (ev.submitter?.value !== "ok") return;
     ev.preventDefault();
@@ -89,6 +90,13 @@ sb.auth.onAuthStateChange(async (ev) => {
   }
 });
 async function signOut(msg) { await sb.auth.signOut(); S.me = null; showLogin(msg || ""); }
+// "Change password", and the forced change after HQ resets a password. Resolves true once changed, false if they sign out instead.
+function passwordDialog({ forced } = {}) {
+  return new Promise(res => {
+    dialog(`<h3>${forced ? "Choose your own password" : "Set a new password"}</h3>${forced ? `<p class="muted">HQ reset your password. Set a new one to continue.</p>` : ""}<label>New password (at least 8 characters)<input name="p" type="password" minlength="8" required autocomplete="new-password"></label><label>Type it again<input name="p2" type="password" minlength="8" required autocomplete="new-password"></label>${forced ? `<p style="font-size:12px"><a href="#" id="pwOut" class="muted">Sign out instead</a></p>` : ""}`, async f => { if (f.p.value !== f.p2.value) throw new Error("The two passwords are different"); const { error } = await sb.auth.updateUser({ password: f.p.value }); if (error) throw error; toast("Password changed. Use it next time you sign in."); res(true); }, { locked: forced });
+    if (forced) $("#pwOut").onclick = e => { e.preventDefault(); $("#dlg").close(); res(false); };
+  });
+}
 
 let idleT;
 function bumpIdle() { clearTimeout(idleT); idleT = setTimeout(() => signOut("Signed out after " + C.autoSignOutMinutes + " minutes without activity."), C.autoSignOutMinutes * 60000); }
@@ -107,6 +115,11 @@ async function start(fresh) {
   let me = await q(sb.from("hb_profiles").select("*").eq("user_id", session.user.id).maybeSingle()).catch(() => null);
   if (!me && await rpc("hb_claim_invite").catch(() => false)) me = await q(sb.from("hb_profiles").select("*").eq("user_id", session.user.id).maybeSingle()).catch(() => null);
   if (!me || me.status !== "active") { await sb.auth.signOut(); return showLogin("Invalid sign-in."); }
+  if (me.must_change_password) { // set by an admin reset; the database clears it only when the password really changes
+    if (!await passwordDialog({ forced: true })) return signOut();
+    me = await q(sb.from("hb_profiles").select("*").eq("user_id", session.user.id).maybeSingle()).catch(() => null);
+    if (!me || me.must_change_password) { await sb.auth.signOut(); return showLogin("Could not confirm your new password. Sign in with it to continue."); }
+  }
   S.me = me; S.admin = me.role === "admin";
   S.regions = await q(sb.from("hb_regions").select("*").order("name"));
   if (fresh) rpc("hb_touch").catch(() => {});
@@ -115,8 +128,9 @@ async function start(fresh) {
   bumpIdle(); renderNav(); route(); refreshBell(); clearInterval(S.poll); S.poll = setInterval(() => { refreshBell(); checkStillActive(); }, 60000);
 }
 async function checkStillActive() {
-  const me = await q(sb.from("hb_profiles").select("status").eq("user_id", S.me.user_id).maybeSingle()).catch(() => null);
+  const me = await q(sb.from("hb_profiles").select("status,must_change_password").eq("user_id", S.me.user_id).maybeSingle()).catch(() => null);
   if (!me || me.status !== "active") signOut("Your access has been removed.");
+  else if (me.must_change_password) signOut("HQ reset your password. Sign in with the temporary password HQ gave you.");
 }
 
 /* ---------- nav & routing ---------- */
@@ -130,7 +144,7 @@ function renderNav() {
     items.map(([k, l, i, b]) => `<a href="#/${k}" data-k="${k}">${ic(i)}${l}${b ? `<span class="badge hidden" data-b="${b}"></span>` : ""}</a>`).join("") +
     `<div class="me"><div class="av">${esc((S.me.full_name || S.me.email)[0].toUpperCase())}</div><div><b>${esc(S.me.full_name || S.me.email)}</b>${S.admin ? "Admin" : "Region lead"}<br><a href="#" id="btnPw" style="color:#9FB0C9;font-size:12px">Change password</a></div><button id="btnOut">Sign out</button></div>`;
   $("#btnOut").onclick = () => signOut();
-  $("#btnPw").onclick = e => { e.preventDefault(); dialog(`<h3>Set a new password</h3><label>New password (at least 8 characters)<input name="p" type="password" minlength="8" required autocomplete="new-password"></label><label>Type it again<input name="p2" type="password" minlength="8" required autocomplete="new-password"></label>`, async f => { if (f.p.value !== f.p2.value) throw new Error("The two passwords are different"); const { error } = await sb.auth.updateUser({ password: f.p.value }); if (error) throw error; toast("Password changed. Use it next time you sign in."); }); };
+  $("#btnPw").onclick = e => { e.preventDefault(); passwordDialog(); };
   $("#scope").innerHTML = S.admin ? "Admin view · all regions" : `Lead view · you can only see ${esc(regionName(S.me.region_id))}`;
 }
 $("#btnMenu").onclick = () => $("#nav").classList.toggle("open");

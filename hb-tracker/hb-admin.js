@@ -316,6 +316,13 @@ P.history = async el => {
 };
 
 /* Users, regions, activity */
+// Shows a reset's temporary password once. It lives only in this dialog and is wiped when the dialog closes; never logged or saved.
+function showTempPassword(p, pw, warning) {
+  const f = dialog(`<h3>Temporary password</h3><p>Give this to ${esc(p.full_name || p.email)} privately. It is shown only once and is not saved anywhere.</p><div class="acts"><input id="tmpPw" readonly value="${esc(pw)}" autocomplete="off" spellcheck="false" style="flex:1;font-family:monospace;font-size:16px"><button type="button" class="sm" id="tmpCopy">Copy</button></div>${warning ? `<div class="warn" style="margin-top:12px">${esc(warning)}</div>` : ""}`, async () => {});
+  $("#tmpCopy").onclick = async () => { try { await navigator.clipboard.writeText(pw); toast("Copied"); } catch { $("#tmpPw").select(); toast("Press Ctrl+C to copy"); } };
+  const d = $("#dlg"), wipe = () => { if (d.open) return; f.innerHTML = ""; d.removeEventListener("close", wipe); }; // ignores the confirm dialog's late close event
+  d.addEventListener("close", wipe);
+}
 P.users = async el => {
   const tab = S.uTab || "users";
   el.innerHTML = head("Users", "Who can sign in, their role and region, and everything they do", `<button class="primary" id="uInv">Invite user</button>`) +
@@ -337,7 +344,7 @@ P.users = async el => {
       p.is_owner ? "Admin (owner)" : `<select data-role="${p.user_id}"><option value="lead" ${p.role === "lead" ? "selected" : ""}>Region lead</option><option value="admin" ${p.role === "admin" ? "selected" : ""}>Admin</option></select>`,
       p.role === "admin" ? "All" : `<select data-reg="${p.user_id}">${regionOptions(p.region_id, { lead: true })}</select>`, listCell(p), fmtTime(p.last_seen),
       pill(p.status, p.status === "active" ? "p-green" : "p-red"),
-      p.is_owner ? `<span class="muted">cannot be removed</span>` : `<div class="acts">${p.status === "active" ? `<button class="sm" data-dis="${p.user_id}">Disable</button>` : `<button class="sm" data-en="${p.user_id}">Enable</button>`}<button class="sm danger" data-rm="${p.user_id}">Remove</button></div>`])))}</div>` +
+      p.is_owner ? `<span class="muted">cannot be removed</span>` : `<div class="acts">${p.status === "active" && p.user_id !== S.me.user_id ? `<button class="sm" data-rst="${p.user_id}">Reset</button>` : ""}${p.status === "active" ? `<button class="sm" data-dis="${p.user_id}">Disable</button>` : `<button class="sm" data-en="${p.user_id}">Enable</button>`}<button class="sm danger" data-rm="${p.user_id}">Remove</button></div>`])))}</div>` +
       (invs.length ? `<div class="card"><h2>Invited, not signed up yet</h2>${table(["Name", "Email", "Role", "Region"], invs.map(i => tr([esc(i.full_name), esc(i.email), i.role, esc(regionName(i.region_id))])))}</div>` : "") +
       `<div class="note">One lead per region. Removing or disabling someone signs them out on every device immediately; their region's data stays saved.</div>`;
     const set = (u, o) => rpc("hb_set_user", { p_user: u, p_role: o.role ?? null, p_region: o.region ?? null, p_status: o.status ?? null }).then(() => { toast("Saved"); reload(); }).catch(e => { fail(e); reload(); });
@@ -345,6 +352,11 @@ P.users = async el => {
     out.querySelectorAll("[data-reg]").forEach(s => s.onchange = () => set(s.dataset.reg, { region: +s.value }));
     out.querySelectorAll("[data-dis]").forEach(b => b.onclick = () => set(b.dataset.dis, { status: "disabled" }));
     out.querySelectorAll("[data-en]").forEach(b => b.onclick = () => set(b.dataset.en, { status: "active" }));
+    out.querySelectorAll("[data-rst]").forEach(b => b.onclick = () => { const p = profs.find(x => x.user_id === b.dataset.rst); dialog(`<h3>Reset password for ${esc(p.full_name || p.email)}?</h3><p>They are signed out on every device and get a temporary password that you will see only once. They must choose their own password when they next sign in.</p>`, async () => {
+      const { data, error } = await sb.functions.invoke("hb-reset-password", { body: { user_id: p.user_id } });
+      if (error) { let m = error.message; try { m = (await error.context.json()).error || m; } catch { } throw new Error(m); }
+      setTimeout(() => showTempPassword(p, data.temp_password, data.warning)); // after this dialog has closed
+    }); });
     out.querySelectorAll("[data-rm]").forEach(b => b.onclick = () => { const p = profs.find(x => x.user_id === b.dataset.rm); dialog(`<h3>Remove ${esc(p.full_name || p.email)}?</h3><p>Their ID stops working immediately and they are signed out everywhere. Officers, reports, requests and chats stay saved.</p><label>Type REMOVE to confirm<input name="c" required></label>`, async f => { if (f.c.value !== "REMOVE") throw new Error("Type REMOVE"); await rpc("hb_set_user", { p_user: p.user_id, p_role: null, p_region: null, p_status: "removed" }); toast("Access removed"); reload(); }); });
   } else if (tab === "regions") {
     out.innerHTML = `<div class="card"><div class="acts" style="margin-bottom:12px"><input id="rgN" placeholder="New region name"><select id="rgK"><option value="field">Field region</option><option value="leaf">Leaf</option><option value="hq">HQ</option></select><button class="primary" id="rgAdd">Add region</button></div>${table(["Region", "Type"], HB.regions.map(r => tr([esc(r.name), r.kind])))}</div>`;
@@ -352,8 +364,8 @@ P.users = async el => {
   } else {
     const [log, profs] = await Promise.all([q(sb.from("hb_audit").select("*").order("at", { ascending: false }).limit(300)), q(sb.from("hb_profiles").select("user_id,full_name,email"))]);
     const who = id => { const p = profs.find(x => x.user_id === id); return p ? p.full_name || p.email : ""; };
-    const label = a => ({ hb_officers_insert: "Officer added", hb_officers_update: "Officer changed", hb_sims_insert: "SIM added", hb_sims_update: "SIM changed", hb_requests_insert: "Request sent", hb_requests_update: "Request decided", hb_reports_insert: "Report uploaded" }[a] || a.replace(/_/g, " "));
-    const det = l => { const d = l.details || {}; if (l.action.startsWith("hb_officers")) return `${d.name} · ${d.status}`; if (l.action.startsWith("hb_sims")) return `${d.number} · ${d.status}`; if (l.action.startsWith("hb_requests")) return `${REQ[d.kind]} · ${d.status}`; if (l.action === "hb_reports_insert") return fmtDate(d.report_date); return Object.entries(d).filter(([, v]) => v !== null && typeof v !== "object").map(([k, v]) => `${k}: ${v}`).join(" · "); };
+    const label = a => ({ hb_officers_insert: "Officer added", hb_officers_update: "Officer changed", hb_sims_insert: "SIM added", hb_sims_update: "SIM changed", hb_requests_insert: "Request sent", hb_requests_update: "Request decided", hb_reports_insert: "Report uploaded", password_reset: "Password reset", password_reset_failed: "Password reset failed" }[a] || a.replace(/_/g, " "));
+    const det = l => { const d = l.details || {}; if (l.action.startsWith("password_reset")) return [d.name, d.email].filter(Boolean).join(" · "); if (l.action.startsWith("hb_officers")) return `${d.name} · ${d.status}`; if (l.action.startsWith("hb_sims")) return `${d.number} · ${d.status}`; if (l.action.startsWith("hb_requests")) return `${REQ[d.kind]} · ${d.status}`; if (l.action === "hb_reports_insert") return fmtDate(d.report_date); return Object.entries(d).filter(([, v]) => v !== null && typeof v !== "object").map(([k, v]) => `${k}: ${v}`).join(" · "); };
     out.innerHTML = `<div class="card">${table(["When", "User", "Region", "Action", "Details"], log.map(l => tr([fmtTime(l.at), esc(who(l.user_id)), esc(regionName(l.region_id)), esc(label(l.action)), esc(det(l))])))}<p class="muted">This log is permanent: nobody, including admins, can edit or delete it.</p></div>`;
   }
 };
