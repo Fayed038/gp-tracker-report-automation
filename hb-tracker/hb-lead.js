@@ -1,7 +1,8 @@
 /* HB-Tracker region lead pages (database rules limit every query to the lead's own region) */
 const L = HB.pages;
 const myRegion = () => HB.me.region_id;
-const myOfficers = () => q(sb.from("hb_officers").select("*").eq("region_id", myRegion()).eq("status", "active").order("name"));
+const regionOfficers = rid => q(sb.from("hb_officers").select("*").eq("region_id", rid).eq("status", "active").order("name"));
+const myOfficers = () => regionOfficers(myRegion());
 const send = (kind, payload) => q(sb.from("hb_requests").insert({ kind, region_id: myRegion(), payload }));
 
 L.home = async el => {
@@ -104,25 +105,31 @@ const TPL_RULES = [
 const TPL_FIRST = [["HB-Tracker: officer list (fill once)"], [""], ["1. One row for every officer in your region. Include yourself if you have a company SIM."], ["2. Name: full name. Designation: TSO, TSS, ASM ... Territory: the area the officer covers."], ["3. Corporate SIM: company number, 11 digits (e.g. 01709661500). Leave empty if there is no company SIM."], ["4. Personal Number: the officer's own number, 11 digits."], ["5. Remarks: anything HQ should know (optional)."], ["6. Do not change the column names. Save, then on the website: My Region > Upload list."]];
 function bindListButtons() {
   const d = $("#tplDl"), u = $("#tplUp"); if (!d || !u) return;
-  d.onclick = downloadMyList;
-  u.onclick = () => { let f = $("#tplFile"); if (!f) { f = document.createElement("input"); f.type = "file"; f.accept = ".xlsx,.xls"; f.id = "tplFile"; f.className = "hidden"; document.body.appendChild(f); } f.value = ""; f.onchange = () => uploadMyList(f.files[0]); f.click(); };
+  d.onclick = () => downloadMyList();
+  u.onclick = () => pickListFile();
 }
-async function downloadMyList() {
-  const offs = await myOfficers();
-  if (!offs.length) {
-    const ws0 = XLSX.utils.aoa_to_sheet([["Name", "Designation", "Territory", "Corporate SIM", "Personal Number", "Remarks"], ["", "", "", "", "", ""]]);
-    ws0["!cols"] = [{ wch: 30 }, { wch: 16 }, { wch: 22 }, { wch: 16 }, { wch: 16 }, { wch: 34 }];
-    const wb0 = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb0, ws0, "Officers"); XLSX.utils.book_append_sheet(wb0, XLSX.utils.aoa_to_sheet(TPL_FIRST), "How to fill");
-    return XLSX.writeFile(wb0, `Officer_List_${regionName(myRegion()).replace(/\W+/g, "_")}.xlsx`);
-  }
-  const rows = offs.map(o => [o.id, o.name, o.designation || "", o.territory || "", o.sim_number || "", o.personal_number || "", "Active", ""]);
-  const ws = XLSX.utils.aoa_to_sheet([TPL_COLS, ...rows]);
-  ws["!cols"] = [{ wch: 10 }, { wch: 28 }, { wch: 16 }, { wch: 22 }, { wch: 15 }, { wch: 15 }, { wch: 9 }, { wch: 40 }];
-  const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Officers"); XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(TPL_RULES), "How to fill");
-  XLSX.writeFile(wb, `Officer_List_${regionName(myRegion()).replace(/\W+/g, "_")}_${today()}.xlsx`);
+// rid: the region whose list is uploaded (a lead: always their own; HQ: any region, on behalf of its lead)
+function pickListFile(rid = myRegion()) { let f = $("#tplFile"); if (!f) { f = document.createElement("input"); f.type = "file"; f.accept = ".xlsx,.xls"; f.id = "tplFile"; f.className = "hidden"; document.body.appendChild(f); } f.value = ""; f.onchange = () => uploadMyList(f.files[0], rid); f.click(); }
+async function downloadMyList(rid = myRegion()) {
+  try {
+    const offs = await regionOfficers(rid), tag = regionName(rid).replace(/\W+/g, "_");
+    if (!offs.length) {
+      const ws0 = XLSX.utils.aoa_to_sheet([["Name", "Designation", "Territory", "Corporate SIM", "Personal Number", "Remarks"], ["", "", "", "", "", ""]]);
+      ws0["!cols"] = [{ wch: 30 }, { wch: 16 }, { wch: 22 }, { wch: 16 }, { wch: 16 }, { wch: 34 }];
+      const wb0 = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb0, ws0, "Officers"); XLSX.utils.book_append_sheet(wb0, XLSX.utils.aoa_to_sheet(TPL_FIRST), "How to fill");
+      return XLSX.writeFile(wb0, `Officer_List_${tag}.xlsx`);
+    }
+    const rows = offs.map(o => [o.id, o.name, o.designation || "", o.territory || "", o.sim_number || "", o.personal_number || "", "Active", ""]);
+    const ws = XLSX.utils.aoa_to_sheet([TPL_COLS, ...rows]);
+    ws["!cols"] = [{ wch: 10 }, { wch: 28 }, { wch: 16 }, { wch: 22 }, { wch: 15 }, { wch: 15 }, { wch: 9 }, { wch: 40 }];
+    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Officers"); XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(TPL_RULES), "How to fill");
+    XLSX.writeFile(wb, `Officer_List_${tag}_${today()}.xlsx`);
+  } catch (e) { fail(e); }
 }
 function cleanNum(v) { const d = String(v ?? "").replace(/\D/g, ""); if (!d) return ""; const t = d.length === 13 && d.startsWith("88") ? d.slice(2) : d.length === 10 ? "0" + d : d; return /^01[3-9]\d{8}$/.test(t) ? t : "BAD:" + v; }
-async function uploadMyList(file) {
+async function uploadMyList(file, rid = myRegion()) {
+  if (!file) return;
+  const hq = !!HB.admin;
   try {
     const wb = await readExcel(file); const ws = wb.Sheets[wb.SheetNames[0]];
     const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
@@ -132,7 +139,7 @@ async function uploadMyList(file) {
     const missingCols = need.filter(k => col(k) < 0);
     if (missingCols.length) throw new Error("This is not the HB-Tracker template (missing columns: " + missingCols.join(", ") + "). Download the template first.");
     const iId = hdr.findIndex(h => h.startsWith("id")), iRem = col("remarks");
-    const offs = await myOfficers(); const byId = Object.fromEntries(offs.map(o => [o.id, o]));
+    const offs = await regionOfficers(rid); const byId = Object.fromEntries(offs.map(o => [o.id, o]));
     const errors = [], add = [], update = [], left = [], seenSim = {}, seenId = new Set();
     aoa.slice(1).forEach((r, k) => {
       const line = k + 2, g = i => String(r[i] ?? "").trim();
@@ -146,7 +153,7 @@ async function uploadMyList(file) {
       if (String(per).startsWith("BAD:")) errors.push(`Row ${line}: Personal number "${per.slice(4)}" is not an 11-digit number`);
       if (sim && !String(sim).startsWith("BAD:") && status !== "left") { if (seenSim[sim]) errors.push(`Row ${line}: SIM ${sim} is also on row ${seenSim[sim]}`); seenSim[sim] = line; }
       if (id) {
-        const o = byId[id]; if (!o) { errors.push(`Row ${line}: ID ${id} is not one of your officers (do not change the ID column)`); return; }
+        const o = byId[id]; if (!o) { errors.push(`Row ${line}: ID ${id} is not an active officer of ${regionName(rid)} (do not change the ID column)`); return; }
         if (seenId.has(id)) { errors.push(`Row ${line}: ID ${id} appears twice`); return; } seenId.add(id);
         if (status === "left") { left.push({ officer_id: id, officer_name: o.name, sim_number: o.sim_number, remarks: rec.remarks }); return; }
         const ch = {}; ["name", "designation", "territory", "sim_number", "personal_number"].forEach(f => { if ((rec[f] || "") !== (o[f] || "")) ch[f] = rec[f] || null; });
@@ -155,17 +162,25 @@ async function uploadMyList(file) {
       else if (name) add.push(rec);
     });
     const missing = offs.filter(o => !seenId.has(o.id)).map(o => ({ officer_id: o.id, officer_name: o.name, sim_number: o.sim_number }));
-    const f = dialog(`<h3>Check before sending</h3>` + (errors.length ? `<div class="warn"><b>${errors.length} problem${errors.length > 1 ? "s" : ""} — fix these in Excel and upload again:</b>\n${errors.slice(0, 30).map(esc).join("\n")}${errors.length > 30 ? "\n…" : ""}</div>` :
+    const f = dialog(`<h3>${hq ? `Officer list for ${esc(regionName(rid))}` : "Check before sending"}</h3>` + (errors.length ? `<div class="warn"><b>${errors.length} problem${errors.length > 1 ? "s" : ""} — fix these in Excel and upload again:</b>\n${errors.slice(0, 30).map(esc).join("\n")}${errors.length > 30 ? "\n…" : ""}</div>` :
       stats([["New officers", add.length, "", "#15803D"], ["Changed", update.length, "", "#1F5FD1"], ["Left", left.length, "", "#C2410C"], ["Missing rows", missing.length, "", "#B45309"]]) +
-      (missing.length ? `<div class="warn">These officers are missing from your file. HQ will ask you about them:\n${missing.map(m => esc(m.officer_name)).join(", ")}</div>` : "") +
+      (missing.length ? `<div class="warn">${hq ? "These officers are not in the file and will not be changed" : "These officers are missing from your file. HQ will ask you about them"}:\n${missing.map(m => esc(m.officer_name)).join(", ")}</div>` : "") +
       (update.length ? `<details><summary>Changes (${update.length})</summary>${update.map(u => `<div style="font-size:13px">${esc(u.officer_name)}: ${Object.entries(u.changes).map(([k, v]) => `${k} "${esc(u.before[k] || "")}" → "${esc(v || "")}"`).join(", ")}</div>`).join("")}</details>` : "") +
-      (!add.length && !update.length && !left.length && !missing.length ? `<p>No changes found — your list matches HB-Tracker.</p>` : `<p>HQ approves these changes before they are saved.</p>`)), async () => {
+      (!add.length && !update.length && !left.length && !missing.length ? `<p>No changes found — ${hq ? "this list" : "your list"} matches HB-Tracker.</p>` : hq ? `<p>You are uploading on behalf of the ${esc(regionName(rid))} lead. The changes are saved immediately and recorded as approved by you. New officers start as "not cross-matched".</p>` : `<p>HQ approves these changes before they are saved.</p>`)), async () => {
         if (errors.length) return;
         if (!add.length && !update.length && !left.length && !missing.length) return;
-        await send("submit_list", { add, update, left, missing, file: file.name });
-        toast("Sent to HQ for approval"); location.hash = "#/requests";
+        const payload = { add, update, left, missing, file: file.name };
+        if (!hq) { await send("submit_list", payload); toast("Sent to HQ for approval"); location.hash = "#/requests"; return; }
+        if (!add.length && !update.length && !left.length) return; // only missing rows: nothing to save
+        // HQ upload: same request + approval path a lead's upload takes, so SIMs and the audit log are handled by the database
+        const req = (await q(sb.from("hb_requests").insert({ kind: "submit_list", region_id: rid, payload: { ...payload, by_hq: true } }).select("id")))[0];
+        try { await rpc("hb_decide", { p_id: req.id, p_approve: true, p_note: "Uploaded by HQ", p_sim: null }); }
+        catch (e) { await rpc("hb_decide", { p_id: req.id, p_approve: false, p_note: "Not saved: " + (e.message || e), p_sim: null }).catch(() => {}); throw new Error("Nothing was saved: " + (e.message || e)); }
+        toast(`${regionName(rid)} list saved`); refreshBell(); reload();
       });
-    if (errors.length) { const b = f.querySelector("#dlgOk"); b.textContent = "OK"; }
-    else { const b = f.querySelector("#dlgOk"); if (add.length || update.length || left.length || missing.length) b.textContent = "Send to HQ"; }
+    const b = f.querySelector("#dlgOk");
+    if (errors.length) b.textContent = "OK";
+    else if (hq && (add.length || update.length || left.length)) b.textContent = "Save list";
+    else if (!hq && (add.length || update.length || left.length || missing.length)) b.textContent = "Send to HQ";
   } catch (e) { fail(e); }
 }
