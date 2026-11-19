@@ -6,10 +6,11 @@ const myOfficers = () => regionOfficers(myRegion());
 const send = (kind, payload) => q(sb.from("hb_requests").insert({ kind, region_id: myRegion(), payload }));
 
 L.home = async el => {
-  const [offs, sims, reqs, rep, anns] = await Promise.all([myOfficers(), q(sb.from("hb_sims").select("number,status").eq("region_id", myRegion())), q(sb.from("hb_requests").select("id").eq("status", "pending")), latestReport(), q(sb.from("hb_announcements").select("*").order("created_at", { ascending: false }).limit(3))]);
+  const [offs, sims, reqs, rep, anns, sp] = await Promise.all([myOfficers(), q(sb.from("hb_sims").select("number,status").eq("region_id", myRegion())), q(sb.from("hb_requests").select("id").eq("status", "pending")), latestReport(), q(sb.from("hb_announcements").select("*").order("created_at", { ascending: false }).limit(3)), spareStatus()]);
+  const mySp = sp.find(s => s.region_id === myRegion());
   let todo = 0; if (rep) { const { count } = await sb.from("hb_report_rows").select("id", { count: "exact", head: true }).eq("report_id", rep.id).not("issue", "is", null).not("sent_at", "is", null).is("justified_at", null); todo = count || 0; }
   el.innerHTML = head(`${esc(regionName(myRegion()))} region`, `Hello ${esc(HB.me.full_name || "")}, here is what needs you today`) +
-    stats([["My officers", offs.length, "active"], ["To justify", todo, rep ? "report " + fmtDate(rep.report_date) : "no report yet", "#C2410C"], ["My spare SIMs", sims.filter(s => s.status === "spare").length, "ready for new joiners", "#15803D"], ["My requests", reqs.length, "waiting for HQ", "#1F5FD1"]]) +
+    stats([["My officers", offs.length, "active"], ["To justify", todo, rep ? "report " + fmtDate(rep.report_date) : "no report yet", "#C2410C"], ["My spare SIMs", sims.filter(s => s.status === "spare").length, mySp ? `HQ target ${mySp.needed} · ${spareBal(mySp)}` : "ready for new joiners", "#15803D"], ["My requests", reqs.length, "waiting for HQ", "#1F5FD1"]]) +
     `<div class="tiles"><a class="tile" href="#/ljustify"><b>Justify today's list</b><span>${todo} officers need a reason</span></a><a class="tile" href="#/change?k=resignation"><b>Officer resigned</b><span>Report it today and say if the SIM came back</span></a><a class="tile" href="#/change?k=new_joiner"><b>New joiner</b><span>Add them and give a spare SIM</span></a><a class="tile" href="#/change?k=transfer"><b>Transfer or promotion</b><span>Move or update an officer</span></a></div>` +
     `<div class="note"><b>Your officer list</b> — download it, correct it in Excel, and upload it back. HQ checks and approves the changes. <div class="acts" style="margin-top:8px"><button class="sm" id="tplDl">Download my list (Excel)</button><button class="sm primary" id="tplUp">Upload updated list</button></div></div>` +
     (anns.length ? `<div class="card"><h2>Announcements from HQ</h2>${anns.map(a => `<div style="border-left:3px solid var(--blue);padding-left:12px;margin-bottom:10px"><b>${esc(a.title)}</b><div>${esc(a.body)}</div><div class="muted" style="font-size:12px">${fmtTime(a.created_at)}</div></div>`).join("")}</div>` : "");
@@ -43,8 +44,10 @@ L.lofficers = async el => {
 };
 
 L.spares = async el => {
-  const sims = await q(sb.from("hb_sims").select("*").eq("region_id", myRegion()).in("status", ["spare", "spare_inactive", "suspended"]).order("number"));
-  el.innerHTML = head("My Spare SIMs", "SIMs returned by officers, kept for new joiners") +
+  const [sims, sp] = await Promise.all([q(sb.from("hb_sims").select("*").eq("region_id", myRegion()).in("status", ["spare", "spare_inactive", "suspended"]).order("number")), spareStatus()]);
+  const s = sp.find(x => x.region_id === myRegion());
+  el.innerHTML = head("My Spare SIMs", "Spare SIMs HQ gave your region, and SIMs returned by officers, kept for new joiners") +
+    (s ? stats([["Ready spares", s.spares_ready, "you can give these", "#15803D"], ["HQ target", s.needed, s.spare_target === null ? `${s.no_sim} without SIM + ${s.pending_joiners} joiners waiting + ${s.spare_buffer} buffer` : "set by HQ"], ["Status", spareBal(s), s.balance < 0 ? "HQ sees this and will send spares" : ""]]) : "") +
     `<div class="card">${table(["Number", "Note", "Since", "Status", ""], sims.map(s => tr([s.number, esc(s.note), fmtDate(s.updated_at), simPill(s), s.status === "spare" ? `<a href="#/change?k=new_joiner&sim=${s.number}"><button class="sm primary">Give to new joiner</button></a>` : ""])), "No spare SIMs.")}</div><div class="note">Need a SIM and have no spare? <a href="#/change?k=need_sim">Request one from HQ</a>.</div>`;
 };
 

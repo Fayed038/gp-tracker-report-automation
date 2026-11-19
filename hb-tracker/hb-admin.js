@@ -5,10 +5,10 @@ const allSims = () => q(sb.from("hb_sims").select("*").order("number"));
 
 /* Dashboard */
 P.dashboard = async el => {
-  const [offs, sims, reqs, rep, leads] = await Promise.all([
+  const [offs, sims, reqs, rep, leads, spare] = await Promise.all([
     q(sb.from("hb_officers").select("id,region_id,verified").eq("status", "active")), allSims(),
     q(sb.from("hb_requests").select("id,created_by").eq("status", "pending")), latestReport(),
-    q(sb.from("hb_profiles").select("*").eq("role", "lead").eq("status", "active"))]);
+    q(sb.from("hb_profiles").select("*").eq("role", "lead").eq("status", "active")), spareStatus()]);
   let rows = [];
   if (rep) rows = await q(sb.from("hb_report_rows").select("region_id,issue,justified_at").eq("report_id", rep.id).not("issue", "is", null));
   const since = new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10);
@@ -20,12 +20,14 @@ P.dashboard = async el => {
   const backupDue = !lastBackup || Date.now() - +lastBackup > 7 * 864e5;
   el.innerHTML = head(`Welcome, ${esc(HB.me.full_name || "Admin")}`, rep ? `Latest report: ${fmtDate(rep.report_date)}` : "No report uploaded yet", `<button id="bk">Download full backup</button><a href="#/report"><button class="primary">Upload today's raw data</button></a>`) +
     (backupDue ? `<div class="warn">Weekly backup reminder: download a full backup and keep it safe.</div>` : "") +
-    stats([["Officers", offs.length, `${offs.filter(o => !o.verified).length} not yet cross-matched`], ["Justifications waiting", waiting, rep ? "latest report" : "", "#C2410C"], ["Requests to approve", reqs.length, "", "#1F5FD1"], ["SIMs in HQ pool", pool, "not returned by officers"]]) +
-    `<div class="card"><h2>Regions</h2>${table(["Region", "Lead", "Officers", "Not cross-matched", "Latest justified", "30-day score"], field.map(r => {
+    stats([["Officers", offs.length, `${offs.filter(o => !o.verified).length} not yet cross-matched`], ["Justifications waiting", waiting, rep ? "latest report" : "", "#C2410C"], ["Requests to approve", reqs.length, "", "#1F5FD1"], ["SIMs in HQ pool", pool, "not returned by officers"],
+      ["Spare SIMs short", spare.reduce((n, s) => n + Math.max(0, -s.balance), 0), `${spare.filter(s => s.balance < 0).length} regions below target · <a href="#/pool">HQ Pool</a>`, "#C2410C"]]) +
+    `<div class="card"><h2>Regions</h2>${table(["Region", "Lead", "Officers", "Not cross-matched", "Latest justified", "30-day score", "Spare SIMs"], field.map(r => {
       const lead = leads.find(l => l.region_id === r.id); const o = offs.filter(x => x.region_id === r.id);
       const lr = rows.filter(x => x.region_id === r.id); const m = month.filter(x => x.region_id === r.id);
       const score = m.length ? Math.round(100 * m.filter(x => x.justified_at).length / m.length) + "%" : "—";
-      return tr([esc(r.name) + (r.kind !== "field" ? " " + pill(r.kind.toUpperCase(), r.kind === "hq" ? "p-navy" : "p-amber") : ""), lead ? esc(lead.full_name || lead.email) : `<span class="muted">no lead</span>`, o.length, o.filter(x => !x.verified).length || "—", lr.length ? `${lr.filter(x => x.justified_at).length}/${lr.length}` : "—", score]);
+      const sp = spare.find(x => x.region_id === r.id);
+      return tr([esc(r.name) + (r.kind !== "field" ? " " + pill(r.kind.toUpperCase(), r.kind === "hq" ? "p-navy" : "p-amber") : ""), lead ? esc(lead.full_name || lead.email) : `<span class="muted">no lead</span>`, o.length, o.filter(x => !x.verified).length || "—", lr.length ? `${lr.filter(x => x.justified_at).length}/${lr.length}` : "—", score, sp ? `${sp.spares_ready}/${sp.needed} ${spareBal(sp)}` : "—"]);
     }), "Add regions in Users → Regions.")}</div>`;
   $("#bk").onclick = fullBackup;
 };
@@ -102,7 +104,8 @@ P.report = async el => {
       if (!offs.length) throw new Error("There are no officers in the database yet.");
       const zones = HB.regions.map((r, i) => ({ code: r.id, title: r.name, sort: i }));
       const mapped = offs.map(o => ({ ...o, report_zone: o.region_id, report_order: 0, report_name: o.name, report_designation: o.designation, report_base: o.territory, tracker_number: o.sim_number }));
-      const rep = GPReport.buildReport(mapped, zones, acc, C);
+      const unheld = await q(sb.from("hb_sims").select("number").is("officer_id", null)); // spares and pool SIMs: never "Absent" or "Couldn't locate"
+      const rep = GPReport.buildReport(mapped, zones, acc, { ...C, skipMobiles: new Set(unheld.map(s => GPReport.normMobile(s.number))) });
       const d = rep.date; const ds = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
       const exists = await q(sb.from("hb_reports").select("id").eq("report_date", ds));
       if (exists.length) throw new Error(`A report for ${fmtDate(ds)} is already saved. Saved reports cannot be replaced; open it in Report History.`);
@@ -178,7 +181,7 @@ P.approvals = async el => {
       return;
     }
     if (needsSim(r)) {
-      const free = await q(sb.from("hb_sims").select("*").in("status", ["hq_pool", "spare", "spare_inactive"]).eq("locked", false).order("number"));
+      const free = await q(sb.from("hb_sims").select("*").in("status", ["hq_pool", "spare"]).eq("locked", false).is("officer_id", null).order("number")); // inactive spares are not ready to give
       dialog(`<h3>Approve: ${esc(REQ[r.kind])}</h3><p>${esc(reqSummary(r))}</p><label>SIM to give ${r.kind === "new_joiner" ? "(optional)" : ""}<select name="s">${r.kind === "new_joiner" ? `<option value="">No SIM yet</option>` : ""}${free.map(s => `<option value="${s.number}">${s.number} · ${SIM_LABEL[s.status][0]}${s.region_id ? " · " + esc(regionName(s.region_id)) : ""}</option>`).join("")}</select></label>`, async f => { await rpc("hb_decide", { p_id: r.id, p_approve: true, p_note: null, p_sim: f.s.value || null }); toast("Approved"); reload(); refreshBell(); });
       return;
     }
@@ -291,12 +294,21 @@ function simDialog(s) {
 
 /* HQ spare pool */
 P.pool = async el => {
-  const sims = await q(sb.from("hb_sims").select("*").in("status", ["hq_pool", "suspended"]).order("number"));
+  const [sims, st] = await Promise.all([q(sb.from("hb_sims").select("*").in("status", ["hq_pool", "suspended", "spare", "spare_inactive"]).eq("locked", false).order("number")), spareStatus()]);
   const pool = sims.filter(s => s.status === "hq_pool"), susp = sims.filter(s => s.status === "suspended");
-  el.innerHTML = head("HQ Spare Pool", "SIMs not returned by officers, and SIMs HQ holds") + stats([["Awaiting decision", pool.length, "", "#B45309"], ["Suspended", susp.length]]) +
-    `<div class="card">${table(["Number", "Last region", "Note", "Since", "Decision"], pool.map(s => tr([s.number, esc(regionName(s.region_id)), esc(s.note), fmtDate(s.updated_at), `<div class="acts"><button class="sm" data-a="suspended" data-n="${s.number}">Suspend</button><button class="sm" data-a="give" data-n="${s.number}">Give to region</button><button class="sm danger" data-a="closed" data-n="${s.number}">Close</button></div>`])), "No SIMs waiting.")}</div>`;
+  const shared = sims.filter(s => !s.region_id && ["spare", "spare_inactive"].includes(s.status)), held = sims.filter(s => s.region_id && ["spare", "spare_inactive"].includes(s.status));
+  const regs = st.filter(s => s.kind !== "hq" || s.spares_ready || s.spares_inactive);
+  el.innerHTML = head("HQ Spare Pool", "Spare SIMs per region, the shared HQ spares, and SIMs not returned by officers") +
+    stats([["Spare SIMs short", st.reduce((n, s) => n + Math.max(0, -s.balance), 0), `${st.filter(s => s.balance < 0).length} regions below target`, "#C2410C"], ["Shared HQ spares", shared.filter(s => s.status === "spare").length, `${shared.filter(s => s.status === "spare_inactive").length} more inactive`, "#15803D"], ["Awaiting decision", pool.length, "not returned by officers", "#B45309"], ["Suspended", susp.length]]) +
+    `<div class="card"><h2>Spare SIMs by region</h2>${table(["Region", "Officers", "Without SIM", "Joiners waiting", "Buffer", "Needed", "Ready spares", "Inactive", "Status", ""], regs.map(s => tr([esc(s.name), s.officers, s.no_sim || "—", s.pending_joiners || "—", s.spare_target === null ? s.spare_buffer : `<span class="muted">fixed</span>`, s.needed, s.spares_ready, s.spares_inactive || "—", spareBal(s), `<button class="sm" data-tg="${s.region_id}">Edit target</button>`])))}<p class="muted">Needed = officers without a SIM + joiners waiting for one + buffer. You can change a region's buffer, or set a fixed number instead.</p></div>` +
+    `<div class="card"><h2>Shared HQ spares</h2>${table(["Number", "Status", "Note", "Since", ""], shared.map(s => tr([s.number, simPill(s), esc(s.note), fmtDate(s.updated_at), `<div class="acts">${s.status === "spare" ? `<button class="sm" data-a="give" data-n="${s.number}">Give to region</button>` : `<button class="sm" data-a="ready" data-n="${s.number}">Mark ready</button>`}</div>`])), "No shared spares. Add SIMs in SIM Register with region \"HQ pool\".")}<p class="muted">Inactive spares stay here until they are activated; they are never offered to a region.</p></div>` +
+    `<div class="card"><h2>Spares held by regions</h2>${table(["Number", "Region", "Status", "Note", "Since", ""], held.map(s => tr([s.number, esc(regionName(s.region_id)), simPill(s), esc(s.note), fmtDate(s.updated_at), `<button class="sm" data-a="move" data-n="${s.number}">Move</button>`])), "No region holds a spare yet.")}</div>` +
+    `<div class="card"><h2>Not returned by officers: awaiting decision</h2>${table(["Number", "Last region", "Note", "Since", "Decision"], pool.map(s => tr([s.number, esc(regionName(s.region_id)), esc(s.note), fmtDate(s.updated_at), `<div class="acts"><button class="sm" data-a="suspended" data-n="${s.number}">Suspend</button><button class="sm" data-a="give" data-n="${s.number}">Give to region</button><button class="sm danger" data-a="closed" data-n="${s.number}">Close</button></div>`])), "No SIMs waiting.")}</div>`;
+  el.querySelectorAll("[data-tg]").forEach(b => b.onclick = () => { const s = st.find(x => x.region_id === +b.dataset.tg); dialog(`<h3>Spare SIM target: ${esc(s.name)}</h3><p class="muted">Rule: ${s.no_sim} without SIM + ${s.pending_joiners} joiners waiting + buffer.</p><div class="fgrid"><label>Buffer<input name="b" type="number" min="0" max="50" value="${s.spare_buffer}" required></label><label>Fixed target (leave empty to use the rule)<input name="t" type="number" min="0" max="500" value="${s.spare_target ?? ""}"></label></div>`, async f => { await q(sb.from("hb_regions").update({ spare_buffer: +f.b.value, spare_target: f.t.value === "" ? null : +f.t.value }).eq("id", s.region_id)); toast("Target saved"); reload(); }); });
   el.querySelectorAll("[data-a]").forEach(b => b.onclick = async () => {
     const n = b.dataset.n, a = b.dataset.a;
+    if (a === "move") return dialog(`<h3>Move spare ${n}</h3><label>To<select name="r"><option value="">Shared HQ spares</option>${regionOptions(held.find(s => s.number === n).region_id)}</select></label>`, async f => { await q(sb.from("hb_sims").update({ region_id: +f.r.value || null, note: f.r.value ? "moved by HQ" : "returned to HQ" }).eq("number", n)); toast("Moved"); reload(); });
+    if (a === "ready") { try { await q(sb.from("hb_sims").update({ status: "spare" }).eq("number", n)); toast("Ready to give"); reload(); } catch (e) { fail(e); } return; }
     if (a === "give") return dialog(`<h3>Give ${n} to a region</h3><label>Region<select name="r">${regionOptions("", { fieldOnly: false })}</select></label><p class="muted">It becomes that lead's spare SIM.</p>`, async f => { await q(sb.from("hb_sims").update({ status: "spare", region_id: +f.r.value, note: "given by HQ" }).eq("number", n)); toast("Done"); reload(); });
     if (a === "closed" && !confirm(`Close ${n}? It stays in the register as closed.`)) return;
     try { await q(sb.from("hb_sims").update({ status: a }).eq("number", n)); toast("Done"); reload(); } catch (e) { fail(e); }

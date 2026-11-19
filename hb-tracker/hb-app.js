@@ -18,6 +18,9 @@ const normNum = n => { const d = String(n ?? "").replace(/\D/g, ""); if (d.lengt
 function pill(t, cls) { return `<span class="pill ${cls || ""}">${esc(t)}</span>`; }
 const SIM_LABEL = { active: ["Active", "p-blue"], spare: ["Active spare", "p-green"], spare_inactive: ["Inactive spare", ""], suspended: ["Suspended", ""], hq_pool: ["HQ pool", "p-amber"], closed: ["Closed", "p-red"] };
 const simPill = s => s.locked ? pill("HQ locked", "p-navy") : pill(...(SIM_LABEL[s.status] || [s.status]));
+// spare SIM target status of a region (row of hb_spare_status): ready spares vs needed
+const spareBal = s => !s ? "—" : s.balance < 0 ? pill(`${-s.balance} short`, "p-red") : s.balance > 0 ? pill(`${s.balance} extra`, "p-green") : pill("On target", "p-blue");
+const spareStatus = () => q(sb.from("hb_spare_status").select("*").order("name"));
 const REQ = { new_joiner: "New joiner", resignation: "Resignation", transfer: "Transfer", promotion: "Promotion", need_sim: "SIM request", edit_officer: "Officer details", submit_list: "Officer list" };
 const reqPill = s => pill(s[0].toUpperCase() + s.slice(1), { pending: "p-amber", approved: "p-green", rejected: "p-red" }[s]);
 function table(cols, rows, empty = "Nothing here yet.") {

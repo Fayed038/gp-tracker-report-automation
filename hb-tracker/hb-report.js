@@ -42,13 +42,14 @@
 
   // rows: array of arrays (row 0 = header), as from XLSX.utils.sheet_to_json(ws,{header:1,raw:true})
   function loadTracker(rows, acc) {
-    acc = acc || { byMobile: {}, clNames: {}, dates: new Set() };
+    acc = acc || { byMobile: {}, clNames: {}, clMobile: {}, dates: new Set() };
+    acc.clMobile = acc.clMobile || {};
     for (let i = 1; i < rows.length; i++) {
       const r = rows[i] || [];
       const [name, mobile, start, end, duration, status, , address] = r;
       if (typeof status === "string" && status.toLowerCase().includes("couldn")) {
         const n = normName(name);
-        if (n && n !== "no officer assigned") acc.clNames[n] = String(name).split("\n")[0].trim();
+        if (n && n !== "no officer assigned") { acc.clNames[n] = String(name).split("\n")[0].trim(); acc.clMobile[n] = normMobile(mobile); }
         continue;
       }
       const mk = normMobile(mobile);
@@ -130,7 +131,9 @@
       });
       out.push({ code: z.code, title: z.title, rows, total: rows.length, allCl });
     }
-    const unmatchedCl = Object.keys(acc.clNames).filter(n => !matchedCl.has(n)).map(n => acc.clNames[n]);
+    // SIMs with no officer (spares, HQ pool) are never reported, even when Team Tracker still shows an old name on them
+    const skip = cfg.skipMobiles || new Set();
+    const unmatchedCl = Object.keys(acc.clNames).filter(n => !matchedCl.has(n) && !skip.has((acc.clMobile || {})[n])).map(n => acc.clNames[n]);
     return { date: new Date(Y, M - 1, D), zones: out, stats, audit, unmatchedCl };
   }
 
