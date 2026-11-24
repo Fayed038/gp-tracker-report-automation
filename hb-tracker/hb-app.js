@@ -20,6 +20,9 @@ const SIM_LABEL = { active: ["Active", "p-blue"], spare: ["Active spare", "p-gre
 const simPill = s => s.locked ? pill("HQ locked", "p-navy") : pill(...(SIM_LABEL[s.status] || [s.status]));
 // spare SIM target status of a region (row of hb_spare_status): ready spares vs needed
 const spareBal = s => !s ? "—" : s.balance < 0 ? pill(`${-s.balance} short`, "p-red") : s.balance > 0 ? pill(`${s.balance} extra`, "p-green") : pill("On target", "p-blue");
+// company GP number series: a Corporate SIM must start with one of these (personal phones go in Personal Number)
+const CORP_SERIES = ["01709661", "01313475", "01329708", "01332819", "01755669", "01765095"];
+const isCorpSim = n => !!n && CORP_SERIES.some(p => String(n).startsWith(p));
 const spareStatus = () => q(sb.from("hb_spare_status").select("*").order("name"));
 const REQ = { new_joiner: "New joiner", resignation: "Resignation", transfer: "Transfer", promotion: "Promotion", need_sim: "SIM request", edit_officer: "Officer details", submit_list: "Officer list" };
 const reqPill = s => pill(s[0].toUpperCase() + s.slice(1), { pending: "p-amber", approved: "p-green", rejected: "p-red" }[s]);

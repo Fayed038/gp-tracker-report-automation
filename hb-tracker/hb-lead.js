@@ -154,6 +154,7 @@ async function uploadMyList(file, rid = myRegion()) {
       if (!["active", "left", "new"].includes(status)) errors.push(`Row ${line}: Status must be Active, Left or New (found "${g(col("status"))}")`);
       if (String(sim).startsWith("BAD:")) errors.push(`Row ${line}: Corporate SIM "${sim.slice(4)}" is not an 11-digit number`);
       if (String(per).startsWith("BAD:")) errors.push(`Row ${line}: Personal number "${per.slice(4)}" is not an 11-digit number`);
+      if (sim && !String(sim).startsWith("BAD:") && !isCorpSim(sim)) errors.push(isCorpSim(per) ? `Row ${line}: Corporate SIM and Personal Number look swapped (${per} is the company SIM)` : `Row ${line}: Corporate SIM ${sim} is not a company GP number. Put personal phones in Personal Number.`);
       if (sim && !String(sim).startsWith("BAD:") && status !== "left") { if (seenSim[sim]) errors.push(`Row ${line}: SIM ${sim} is also on row ${seenSim[sim]}`); seenSim[sim] = line; }
       if (id) {
         const o = byId[id]; if (!o) { errors.push(`Row ${line}: ID ${id} is not an active officer of ${regionName(rid)} (do not change the ID column)`); return; }
