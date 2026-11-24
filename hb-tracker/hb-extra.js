@@ -146,7 +146,20 @@ P.history = async el => {
   const drawList = () => {
     const a = $("#hFrom").value, b = $("#hTo").value;
     const list = reps.filter(r => (!a || r.report_date >= a) && (!b || r.report_date <= b));
-    $("#hList").innerHTML = `<div class="card"><h2>${list.length} report${list.length === 1 ? "" : "s"}${rid() ? " · " + esc(regionName(rid())) + " only" : ""}</h2>${table(["Date", "Officers", "Not tracked", "Raw files", ""], list.map(r => { const fs = stored.filter(f => f.report_date === r.report_date); return tr([fmtDate(r.report_date), r.summary?.officers ?? "", r.summary?.issues ?? "", fs.length ? fs.map(f => `<a href="#" data-f="${f.id}">${esc(f.name)}</a>`).join("<br>") : esc((r.summary?.files || []).join(", ")), `<div class="acts"><button class="sm" data-o="${r.id}">Open</button><button class="sm" data-p="${r.id}">PDF</button><button class="sm" data-c="${r.id}">CSV</button></div>`]); }), "No reports in this period.")}</div>`;
+    $("#hList").innerHTML = `<div class="card"><h2>${list.length} report${list.length === 1 ? "" : "s"}${rid() ? " · " + esc(regionName(rid())) + " only" : ""}</h2>${table(["Date", "Officers", "Not tracked", "Raw files", ""], list.map(r => { const fs = stored.filter(f => f.report_date === r.report_date); return tr([fmtDate(r.report_date), r.summary?.officers ?? "", r.summary?.issues ?? "", fs.length ? fs.map(f => `<a href="#" data-f="${f.id}">${esc(f.name)}</a>`).join("<br>") : esc((r.summary?.files || []).join(", ")), `<div class="acts"><button class="sm" data-o="${r.id}">Open</button><button class="sm" data-p="${r.id}">PDF</button><button class="sm" data-c="${r.id}">CSV</button>${S.admin ? `<button class="sm danger" data-del="${r.id}">Delete</button>` : ""}</div>`]); }), "No reports in this period.")}</div>`;
+    // HQ admin only: delete a wrong report so it can be built again (not allowed once a lead has justified any row)
+    $("#hList").querySelectorAll("[data-del]").forEach(x => x.onclick = async () => {
+      const r = reps.find(y => y.id === +x.dataset.del);
+      const rows = await q(sb.from("hb_report_rows").select("sent_at,justified_at,reason").eq("report_id", r.id)).catch(() => []);
+      const just = rows.filter(y => y.justified_at || y.reason).length, sent = rows.filter(y => y.sent_at).length;
+      if (just) return toast(`Leads have already justified ${just} rows of the ${fmtDate(r.report_date)} report, so it cannot be deleted.`, 6000);
+      dialog(`<h3>Delete the report for ${fmtDate(r.report_date)}?</h3><p>${rows.length} rows${sent ? `, <b>${sent} already sent to leads</b> (their lists for this day will disappear)` : ", nothing sent to leads yet"}. Its raw Team Tracker files are deleted too. You can then build the report for this day again.</p><p class="muted">This cannot be undone. The deletion is recorded in the Activity log.</p><label>Type the date to confirm: <b>${r.report_date}</b><input name="d" autocomplete="off" required></label>`, async f => {
+        if (f.d.value.trim() !== r.report_date) throw new Error(`Type ${r.report_date} exactly to confirm`);
+        const { data: paths, error } = await sb.rpc("hb_delete_report", { p_id: r.id }); if (error) throw error;
+        if (paths && paths.length) await sb.storage.from("hb-files").remove(paths); // the raw files of that day
+        toast(`Report for ${fmtDate(r.report_date)} deleted. You can build it again in Daily Report.`, 5000); reload();
+      });
+    });
     $("#hList").querySelectorAll("[data-f]").forEach(x => x.onclick = e => { e.preventDefault(); const f = stored.find(y => y.id === +x.dataset.f); FILES.open(f.path, f.name); });
     $("#hList").querySelectorAll("[data-o]").forEach(x => x.onclick = async () => { const { zones, date, noSim } = await load(+x.dataset.o); $("#hOut").innerHTML = `<div class="card">${zones.length || noSim?.officers?.length ? renderReportHtml(zones, date, "", noSim) : "No officers of this region in that report."}</div>`; $("#hOut").scrollIntoView(); });
     $("#hList").querySelectorAll("[data-p]").forEach(x => x.onclick = async () => { const { zones, date, noSim } = await load(+x.dataset.p); reportPdf(zones, date, `GPS_Report_${date}${tag()}.pdf`, noSim); });
