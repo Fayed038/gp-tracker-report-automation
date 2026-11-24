@@ -244,6 +244,51 @@ async function officerDialog(o) {
   });
 }
 
+/* Officers without a corporate SIM: what to ask GP for, and giving them spares */
+P.nosim = async el => {
+  const [offs, sims, ex] = await Promise.all([allOfficers(), allSims(), q(sb.from("hb_settings").select("value").eq("key", "nosim_exempt").maybeSingle())]);
+  const exempt = new Set((ex && ex.value) || []); // officer ids marked "SIM not needed" (e.g. no network in their area)
+  const all = offs.filter(o => o.status === "active" && !isCorpSim(o.sim_number));
+  const need = all.filter(o => !exempt.has(o.id)), skip = all.filter(o => exempt.has(o.id));
+  const ready = sims.filter(s => s.status === "spare" && !s.officer_id && !s.locked);
+  const sparesFor = o => ready.filter(s => s.region_id === o.region_id || !s.region_id);
+  const problem = o => o.sim_number ? pill("Not a company number", "p-amber") + `<br><span class="muted" style="font-size:12px">${esc(o.sim_number)}</span>` : pill("No SIM", "p-red");
+  const byRegion = {}; need.forEach(o => byRegion[regionName(o.region_id)] = (byRegion[regionName(o.region_id)] || 0) + 1);
+  el.innerHTML = head("Officers without a corporate SIM", "Active officers whose Corporate SIM is empty or not a company GP number", `<button id="nExp">Export for GP</button>`) +
+    stats([["Need a SIM", need.length, Object.keys(byRegion).length + " regions", "#C2410C"], ["No SIM at all", need.filter(o => !o.sim_number).length], ["Not a company number", need.filter(o => o.sim_number).length, "check with the lead"], ["Ready spares", ready.length, `${ready.filter(s => !s.region_id).length} shared · <a href="#/pool">HQ Pool</a>`, "#15803D"]]) +
+    `<div class="filters"><select id="nR">${regionOptions("", { all: "All regions" })}</select></div><div class="card" id="nOut"></div>` +
+    (skip.length ? `<div class="card"><h2>SIM not needed (${skip.length})</h2>${table(["Region", "Name", "Designation", "Territory", "Personal", ""], skip.map(o => tr([esc(regionName(o.region_id)), esc(o.name), esc(o.designation), esc(o.territory), esc(o.personal_number), `<button class="sm" data-ex="${o.id}">Needs a SIM</button>`])))}</div>` : "");
+  const draw = () => {
+    const rg = +$("#nR").value, list = need.filter(o => !rg || o.region_id === rg);
+    $("#nOut").innerHTML = `<h2>${list.length} officer${list.length === 1 ? "" : "s"}</h2>` + table(["Region", "Name", "Designation", "Territory", "Personal", "Problem", ""], list.map(o => {
+      const n = sparesFor(o).length;
+      return tr([esc(regionName(o.region_id)), esc(o.name), esc(o.designation), esc(o.territory), esc(o.personal_number), problem(o),
+        `<div class="acts">${n ? `<button class="sm primary" data-give="${o.id}">Give SIM</button>` : `<span class="muted">no spare</span>`}<button class="sm" data-ex="${o.id}">SIM not needed</button></div>`]);
+    }), "Every active officer has a company SIM.");
+    bind();
+  };
+  const bind = () => {
+    el.querySelectorAll("[data-give]").forEach(b => b.onclick = () => {
+      const o = need.find(x => x.id === +b.dataset.give), opts = sparesFor(o).sort((a, c) => (c.region_id === o.region_id) - (a.region_id === o.region_id) || a.number.localeCompare(c.number));
+      dialog(`<h3>Give a SIM to ${esc(o.name)}</h3><p class="muted">${esc(o.designation || "")} · ${esc(o.territory || "")} · ${esc(regionName(o.region_id))}</p><label>Spare SIM<select name="n">${opts.map(s => `<option value="${s.number}">${s.number} · ${s.region_id ? "this region's spare" : "shared HQ spare"}${s.note ? " · " + esc(s.note).slice(0, 60) : ""}</option>`).join("")}</select></label><p class="muted">Then ask GP to add this number to Team Tracker under ${esc(o.name)}.</p>`, async f => {
+        const n = f.n.value;
+        const got = await q(sb.from("hb_sims").update({ status: "active", officer_id: o.id, region_id: o.region_id, note: null }).eq("number", n).eq("status", "spare").is("officer_id", null).eq("locked", false).select("number"));
+        if (!got.length) throw new Error(`SIM ${n} is no longer a free spare. Reload and pick another.`);
+        if (o.sim_number) await q(sb.from("hb_sims").update({ status: "closed", officer_id: null, note: `Replaced by ${n}: not a company GP number` }).eq("number", o.sim_number).eq("locked", false));
+        await q(sb.from("hb_officers").update({ sim_number: n }).eq("id", o.id));
+        toast(`${n} given to ${o.name}`); reload();
+      });
+    });
+    el.querySelectorAll("[data-ex]").forEach(b => b.onclick = async () => {
+      const id = +b.dataset.ex; exempt.has(id) ? exempt.delete(id) : exempt.add(id);
+      try { await q(sb.from("hb_settings").upsert({ key: "nosim_exempt", value: [...exempt] })); reload(); } catch (e) { fail(e); }
+    });
+  };
+  $("#nR").oninput = draw;
+  $("#nExp").onclick = () => downloadXlsx(`Officers_without_corporate_SIM_${today()}.xlsx`, { "Need a SIM": need.map((o, i) => ({ SL: i + 1, Region: regionName(o.region_id), Name: o.name, Designation: o.designation, Territory: o.territory, "Personal number": o.personal_number, Problem: o.sim_number ? `Not a company number (${o.sim_number})` : "No SIM" })) });
+  draw();
+};
+
 /* SIM register */
 const SIM_TABS = [["all", "All corporate"], ["seq", "Sequential (017 → 013)"], ["region", "Region wise"], ["spare", "Active spare"], ["spare_inactive", "Inactive spare"], ["suspended", "Suspended"], ["hq", "HQ (locked)"]];
 P.sims = async el => {
