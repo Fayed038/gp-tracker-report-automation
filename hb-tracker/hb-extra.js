@@ -136,16 +136,21 @@ P.history = async el => {
     `<div class="filters"><label>From<input type="date" id="hFrom"></label><label>To<input type="date" id="hTo"></label><label>Region<select id="hR">${regionOptions("", { all: "All regions" })}</select></label><input id="hQ" placeholder="Officer name or number (search inside reports)"><button id="hGo">Search</button></div><div id="hList"></div><div id="hOut"></div>`;
   $("#hBk").onclick = fullBackup;
   const rid = () => +$("#hR").value || null;
-  const load = async id => { let rows = await q(sb.from("hb_report_rows").select("*").eq("report_id", id).order("id")); if (rid()) rows = rows.filter(r => r.region_id === rid()); return { zones: zonesFromRows(rows), date: reps.find(r => r.id === id).report_date }; };
+  const load = async id => {
+    let rows = await q(sb.from("hb_report_rows").select("*").eq("report_id", id).order("id")); if (rid()) rows = rows.filter(r => r.region_id === rid());
+    const rp = reps.find(r => r.id === id), ns = rp.summary && rp.summary.noSim; // saved "No SIM" list (reports from 24 Nov 2026 on)
+    const noSim = ns && rid() ? { ...ns, officers: ns.officers.filter(o => o.region === regionName(rid())) } : ns;
+    return { zones: zonesFromRows(rows), date: rp.report_date, noSim };
+  };
   const tag = () => rid() ? "_" + regionName(rid()).replace(/\W+/g, "_") : "";
   const drawList = () => {
     const a = $("#hFrom").value, b = $("#hTo").value;
     const list = reps.filter(r => (!a || r.report_date >= a) && (!b || r.report_date <= b));
     $("#hList").innerHTML = `<div class="card"><h2>${list.length} report${list.length === 1 ? "" : "s"}${rid() ? " · " + esc(regionName(rid())) + " only" : ""}</h2>${table(["Date", "Officers", "Not tracked", "Raw files", ""], list.map(r => { const fs = stored.filter(f => f.report_date === r.report_date); return tr([fmtDate(r.report_date), r.summary?.officers ?? "", r.summary?.issues ?? "", fs.length ? fs.map(f => `<a href="#" data-f="${f.id}">${esc(f.name)}</a>`).join("<br>") : esc((r.summary?.files || []).join(", ")), `<div class="acts"><button class="sm" data-o="${r.id}">Open</button><button class="sm" data-p="${r.id}">PDF</button><button class="sm" data-c="${r.id}">CSV</button></div>`]); }), "No reports in this period.")}</div>`;
     $("#hList").querySelectorAll("[data-f]").forEach(x => x.onclick = e => { e.preventDefault(); const f = stored.find(y => y.id === +x.dataset.f); FILES.open(f.path, f.name); });
-    $("#hList").querySelectorAll("[data-o]").forEach(x => x.onclick = async () => { const { zones, date } = await load(+x.dataset.o); $("#hOut").innerHTML = `<div class="card">${zones.length ? renderReportHtml(zones, date) : "No officers of this region in that report."}</div>`; $("#hOut").scrollIntoView(); });
-    $("#hList").querySelectorAll("[data-p]").forEach(x => x.onclick = async () => { const { zones, date } = await load(+x.dataset.p); reportPdf(zones, date, `GPS_Report_${date}${tag()}.pdf`); });
-    $("#hList").querySelectorAll("[data-c]").forEach(x => x.onclick = async () => { const { zones, date } = await load(+x.dataset.c); downloadCsv(`GPS_Report_${date}${tag()}.csv`, reportCsvRows(zones)); });
+    $("#hList").querySelectorAll("[data-o]").forEach(x => x.onclick = async () => { const { zones, date, noSim } = await load(+x.dataset.o); $("#hOut").innerHTML = `<div class="card">${zones.length || noSim?.officers?.length ? renderReportHtml(zones, date, "", noSim) : "No officers of this region in that report."}</div>`; $("#hOut").scrollIntoView(); });
+    $("#hList").querySelectorAll("[data-p]").forEach(x => x.onclick = async () => { const { zones, date, noSim } = await load(+x.dataset.p); reportPdf(zones, date, `GPS_Report_${date}${tag()}.pdf`, noSim); });
+    $("#hList").querySelectorAll("[data-c]").forEach(x => x.onclick = async () => { const { zones, date, noSim } = await load(+x.dataset.c); downloadCsv(`GPS_Report_${date}${tag()}.csv`, reportCsvRows(zones, noSim)); });
   };
   ["#hFrom", "#hTo", "#hR"].forEach(s => $(s).onchange = () => { $("#hOut").innerHTML = ""; drawList(); });
   $("#hGo").onclick = async () => {

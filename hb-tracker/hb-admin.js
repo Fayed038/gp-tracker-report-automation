@@ -100,27 +100,35 @@ P.report = async el => {
     $("#rpBuild").disabled = true;
     try {
       let acc; for (const f of files) { const wb = await readExcel(f); for (const sn of wb.SheetNames) acc = GPReport.loadTracker(XLSX.utils.sheet_to_json(wb.Sheets[sn], { header: 1, raw: false }), acc); }
-      const offs = await q(sb.from("hb_officers").select("*").eq("status", "active").order("name"));
+      const [offs, leads, ex] = await Promise.all([q(sb.from("hb_officers").select("*").eq("status", "active").order("name")), q(sb.from("hb_profiles").select("full_name,email,region_id").eq("role", "lead").eq("status", "active")), q(sb.from("hb_settings").select("value").eq("key", "nosim_exempt").maybeSingle())]);
       if (!offs.length) throw new Error("There are no officers in the database yet.");
+      // officers without a company SIM are not tracked: they go in a separate "No SIM" list at the top, with their lead's contact
+      const exempt = new Set((ex && ex.value) || []), untracked = offs.filter(o => !isCorpSim(o.sim_number));
+      const noSim = { officers: untracked.map(o => ({ region: regionName(o.region_id), name: o.name, desig: o.designation, base: o.territory, personal: o.personal_number, problem: exempt.has(o.id) ? "SIM not needed" : o.sim_number ? `Not a company number (${o.sim_number})` : "No SIM" })).sort((a, b) => a.region.localeCompare(b.region) || a.name.localeCompare(b.name)), leads: {} };
+      [...new Set(untracked.map(o => o.region_id))].forEach(rid => {
+        const l = leads.find(x => x.region_id === rid); if (!l) return;
+        const k = GPReport.nameKey(l.full_name || ""), me = k && offs.find(o => o.region_id === rid && GPReport.nameKey(o.name) === k); // the lead's own officer row, for a phone number
+        noSim.leads[regionName(rid)] = { name: l.full_name || l.email, email: l.email, phone: me ? (isCorpSim(me.sim_number) ? me.sim_number : me.personal_number) || "" : "" };
+      });
       const zones = HB.regions.map((r, i) => ({ code: r.id, title: r.name, sort: i }));
-      const mapped = offs.map(o => ({ ...o, report_zone: o.region_id, report_order: 0, report_name: o.name, report_designation: o.designation, report_base: o.territory, tracker_number: o.sim_number }));
+      const mapped = offs.filter(o => isCorpSim(o.sim_number)).map(o => ({ ...o, report_zone: o.region_id, report_order: 0, report_name: o.name, report_designation: o.designation, report_base: o.territory, tracker_number: o.sim_number }));
       const unheld = await q(sb.from("hb_sims").select("number").is("officer_id", null)); // spares and pool SIMs: never "Absent" or "Couldn't locate"
       const rep = GPReport.buildReport(mapped, zones, acc, { ...C, skipMobiles: new Set(unheld.map(s => GPReport.normMobile(s.number))) });
       const d = rep.date; const ds = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
       const exists = await q(sb.from("hb_reports").select("id").eq("report_date", ds));
       if (exists.length) throw new Error(`A report for ${fmtDate(ds)} is already saved. Saved reports cannot be replaced; open it in Report History.`);
       const issues = rep.zones.flatMap(z => z.rows).filter(r => r.remarks).length;
-      const saved = (await q(sb.from("hb_reports").insert({ report_date: ds, summary: { ...rep.stats, issues, files: files.map(f => f.name), unmatchedCl: rep.unmatchedCl } }).select()))[0];
+      const saved = (await q(sb.from("hb_reports").insert({ report_date: ds, summary: { ...rep.stats, issues, files: files.map(f => f.name), unmatchedCl: rep.unmatchedCl, noSim } }).select()))[0];
       const rows = rep.zones.flatMap(z => z.rows.map(r => ({ report_id: saved.id, report_date: ds, officer_id: r.oid, region_id: r.region_id, officer_name: r.name, sim_number: r.mobile, checkpoints: r, issue: /Inactive/.test(r.remarks) ? null : (r.remarks || null) })));
       for (let i = 0; i < rows.length; i += 500) await q(sb.from("hb_report_rows").insert(rows.slice(i, i + 500)));
       for (const f of files) await FILES.save(f, "daily_raw", ds);
       S.lastRep = rep;
-      $("#rpOut").innerHTML = stats([["On report", rep.stats.officers], ["Located", rep.stats.officers - rep.stats.cl_tracker_set - rep.stats.no_raw_record - rep.stats.absent_set, "", "#15803D"], ["Couldn't locate", rep.stats.cl_tracker_set, "review in Justifications", "#C2410C"], ["Absent / no record", rep.stats.absent_set + rep.stats.no_raw_record, "review in Justifications", "#C2410C"]]) +
+      $("#rpOut").innerHTML = stats([["On report", rep.stats.officers], ["Located", rep.stats.officers - rep.stats.cl_tracker_set - rep.stats.no_raw_record - rep.stats.absent_set, "", "#15803D"], ["Couldn't locate", rep.stats.cl_tracker_set, "review in Justifications", "#C2410C"], ["Absent / no record", rep.stats.absent_set + rep.stats.no_raw_record, "review in Justifications", "#C2410C"], ["No SIM", noSim.officers.length, "listed first · <a href=\"#/nosim\">Without SIM</a>", "#B45309"]]) +
         (rep.unmatchedCl.length ? `<div class="warn">Team Tracker "Couldn't locate" names not matched to any officer:\n${rep.unmatchedCl.map(esc).join(", ")}</div>` : "") +
-        `<div class="card">${renderReportHtml(rep.zones, rep.date)}</div>`;
+        `<div class="card">${renderReportHtml(rep.zones, rep.date, "", noSim)}</div>`;
       $("#rpPdf").disabled = $("#rpCsv").disabled = false;
-      $("#rpPdf").onclick = () => reportPdf(rep.zones, rep.date, `GPS_Report_${ds}.pdf`);
-      $("#rpCsv").onclick = () => downloadCsv(`GPS_Report_${ds}.csv`, reportCsvRows(rep.zones));
+      $("#rpPdf").onclick = () => reportPdf(rep.zones, rep.date, `GPS_Report_${ds}.pdf`, noSim);
+      $("#rpCsv").onclick = () => downloadCsv(`GPS_Report_${ds}.csv`, reportCsvRows(rep.zones, noSim));
       toast("Report saved. Go to Justifications to send lists to leads."); refreshBell();
     } catch (e) { fail(e); } finally { $("#rpBuild").disabled = false; }
   };

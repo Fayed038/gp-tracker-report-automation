@@ -232,23 +232,37 @@ function reqSummary(r) {
 }
 
 /* ---------- report rendering (shared) ---------- */
-function renderReportHtml(zones, date, wm) {
+// "No SIM" block at the top of a report: officers without a company SIM, by region, with their lead's contact
+function renderNoSimHtml(ns, ds, wm) {
+  if (!ns || !ns.officers || !ns.officers.length) return "";
+  const groups = {}; ns.officers.forEach(o => (groups[o.region] = groups[o.region] || []).push(o));
+  return `<div class="rep-zone"><div class="rep-title">No SIM — officers without a company SIM (${ns.officers.length})</div><div class="rep-date">${ds} · not tracked, so they are not on the regional lists below. Contact the region lead to arrange a SIM.</div>
+  <table class="rep"><colgroup><col style="width:4%"><col style="width:22%"><col style="width:14%"><col style="width:18%"><col style="width:16%"><col></colgroup>
+  <thead><tr><th>SL</th><th>Name</th><th>Desig.</th><th>Territory</th><th>Personal number</th><th>Problem</th></tr></thead>
+  <tbody>${Object.entries(groups).map(([reg, list]) => { const l = (ns.leads || {})[reg];
+    return `<tr><td colspan="6" style="background:#E3E9F2"><b>${esc(reg)}</b> (${list.length}) — Lead: ${l ? `<b>${esc(l.name)}</b>${l.phone ? " · " + esc(l.phone) : ""}${l.email ? " · " + esc(l.email) : ""}` : "no lead assigned"}</td></tr>` +
+      list.map((o, i) => `<tr><td>${i + 1}</td><td>${esc(o.name)}</td><td>${esc(o.desig)}</td><td>${esc(o.base)}</td><td>${esc(o.personal)}</td><td class="${o.problem === "SIM not needed" ? "" : "red"}">${esc(o.problem)}</td></tr>`).join(""); }).join("")}</tbody></table>
+  ${wm ? `<div class="wm">${esc(wm)}</div>` : ""}</div>`;
+}
+function renderReportHtml(zones, date, wm, noSim) {
   const d = date instanceof Date ? date : new Date(date);
   const ds = d.toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" });
-  return zones.map(z => `<div class="rep-zone"><div class="rep-title">${esc(z.title)} — GPS Location Report</div><div class="rep-date">${ds}</div>
+  return renderNoSimHtml(noSim, ds, wm) + zones.map(z => `<div class="rep-zone"><div class="rep-title">${esc(z.title)} — GPS Location Report</div><div class="rep-date">${ds}</div>
   <table class="rep"><colgroup><col style="width:3%"><col style="width:12%"><col style="width:6%"><col style="width:8%"><col style="width:9%"><col><col><col><col><col style="width:12%"></colgroup>
   <thead><tr><th>SL</th><th>Name</th><th>Desig.</th><th>Territory</th><th>Number</th>${C.checkpoints.map(c => `<th>${c[0]}</th>`).join("")}<th>Remarks / Justification</th></tr></thead>
   <tbody>${z.rows.map(r => `<tr><td>${r.sl}</td><td>${esc(r.name)}</td><td>${esc(r.desig)}</td><td>${esc(r.base)}</td><td>${esc(r.mobile)}</td>${r.cells.map(c => `<td class="${c.red ? "red" : ""}">${esc(c.txt)}</td>`).join("")}<td class="${r.rred ? "red" : ""}">${esc(r.remarks)}${r.reason ? `<br><span style="color:#0F172A">↳ ${esc(r.reason)}${r.note ? ": " + esc(r.note) : ""}</span>` : ""}</td></tr>`).join("")}</tbody></table>
   ${wm ? `<div class="wm">${esc(wm)}</div>` : ""}</div>`).join("");
 }
-function reportPdf(zones, date, name) {
+function reportPdf(zones, date, name, noSim) {
   const wm = `Confidential · downloaded by ${S.me.full_name || S.me.email} · ${new Date().toLocaleString("en-GB")}`;
   const box = document.createElement("div"); box.className = "pdfmode";
-  box.innerHTML = zones.map((z, i) => `<div style="${i ? "page-break-before:always" : ""}">${renderReportHtml([z], date, wm)}</div>`).join("");
+  const first = noSim && noSim.officers && noSim.officers.length ? `<div>${renderReportHtml([], date, wm, noSim)}</div>` : "";
+  box.innerHTML = first + zones.map((z, i) => `<div style="${i || first ? "page-break-before:always" : ""}">${renderReportHtml([z], date, wm)}</div>`).join("");
   return html2pdf().set({ margin: [8, 6, 8, 6], filename: name, image: { type: "jpeg", quality: .95 }, html2canvas: { scale: 2 }, jsPDF: { unit: "mm", format: "a4", orientation: "landscape" }, pagebreak: { mode: ["css"] } }).from(box).save();
 }
-function reportCsvRows(zones) {
+function reportCsvRows(zones, noSim) {
   const out = [];
+  ((noSim && noSim.officers) || []).forEach((o, i) => { const l = (noSim.leads || {})[o.region]; const r = { Region: o.region, SL: i + 1, Name: o.name, Designation: o.desig, Territory: o.base, Number: "" }; C.checkpoints.forEach(c => r[c[0]] = ""); r.Remarks = `NO SIM: ${o.problem}`; r.Justification = `Personal ${o.personal || "—"} · Lead ${l ? [l.name, l.phone, l.email].filter(Boolean).join(" ") : "none"}`; out.push(r); });
   zones.forEach(z => z.rows.forEach(r => { const o = { Region: z.title, SL: r.sl, Name: r.name, Designation: r.desig, Territory: r.base, Number: r.mobile }; C.checkpoints.forEach((c, i) => o[c[0]] = r.cells[i].txt); o.Remarks = r.remarks; o.Justification = (r.reason || "") + (r.note ? ": " + r.note : ""); out.push(o); }));
   return out;
 }
